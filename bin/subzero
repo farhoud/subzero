@@ -1,0 +1,66 @@
+#!/bin/sh
+# subzero launcher: the one way the plugin starts Node.
+#
+#   subzero <command> ...             run dist/cli.js (init, run, tasks, attach, show)
+#   subzero --bundle server|hook|agent-hook [args]
+#                                     run that bundle (MCP server and the two hooks)
+#
+# Finds the plugin root from its own location (symlinks followed), checks that
+# node is version 22 or later, and otherwise prints one plain line on stderr.
+# A failed check exits 1 for the CLI and the server, and 0 for the hook
+# bundles, so the hooks still fail open.
+
+self=$0
+while [ -h "$self" ]; do
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self=${self%/*}/$target ;;
+  esac
+done
+case $self in
+  */*) bin_dir=$(cd "${self%/*}" && pwd -P) ;;
+  *) bin_dir=$(pwd -P) ;;
+esac
+root=${bin_dir%/*}
+
+bundle=cli
+fail=1
+if [ "${1:-}" = "--bundle" ]; then
+  bundle=${2:-}
+  [ "$#" -ge 2 ] && shift 2 || shift "$#"
+  case $bundle in
+    server) ;;
+    hook | agent-hook) fail=0 ;;
+    *)
+      echo "subzero: unknown bundle \"$bundle\" (expected server, hook or agent-hook)" >&2
+      exit 2
+      ;;
+  esac
+fi
+
+message=
+if ! command -v node >/dev/null 2>&1; then
+  message="subzero: Node.js 22 or later is required, but node was not found. Install Node.js 22 from https://nodejs.org and restart Claude Code."
+else
+  found=$(node --version 2>/dev/null)
+  version=${found#v}
+  major=${version%%.*}
+  case $major in
+    '' | *[!0-9]*) major=0 ;;
+  esac
+  if [ "$major" -lt 22 ]; then
+    message="subzero: Node.js 22 or later is required, but this is ${found:-an unknown version}. Install Node.js 22 from https://nodejs.org and restart Claude Code."
+  fi
+fi
+if [ -n "$message" ]; then
+  echo "$message" >&2
+  exit "$fail"
+fi
+
+if [ -z "${SUBZERO_PROJECT_DIR:-}" ] && [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+  SUBZERO_PROJECT_DIR=$CLAUDE_PROJECT_DIR
+  export SUBZERO_PROJECT_DIR
+fi
+
+exec node "$root/dist/$bundle.js" "$@"

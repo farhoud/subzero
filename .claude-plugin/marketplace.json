@@ -1,0 +1,14 @@
+{
+  "name": "qoherent",
+  "owner": {
+    "name": "Qoherent"
+  },
+  "description": "Plugins from Qoherent. This branch holds the built subzero plugin; it is rebuilt by scripts/publish-plugin-branch.mjs and is not edited by hand.",
+  "plugins": [
+    {
+      "name": "subzero",
+      "source": "./",
+      "description": "Delegate a skill's work to an isolated pi child on another model, through one MCP tool."
+    }
+  ]
+}
