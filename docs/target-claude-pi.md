@@ -2,6 +2,12 @@
 
 Status: analysis · 2026-10-30 · reads with [design.md](design.md) and [decisions.md](decisions.md).
 
+> **Update 2026-11-12.** This page analyses one parent host (Claude Code) with one child host (pi). The vocabulary is
+> now fixed: *parent host* and *child host*, and the bare "host" below means whichever the sentence is about. pi
+> also becomes a parent host ([design.md](design.md) §5.5), and the Claude Code parent gains background tasks and
+> a cancel command ([design.md](design.md) §5.4). The agent file now requires `medium`, `general` and `fallback`
+> (decision 29 in [decisions.md](decisions.md)).
+
 > **Update 2026-11-03.** Brought into line with the spike's Sigil contracts (`design/*.sigil`), which win
 > where they differ: the result has no changed-file list, a task whose owner process died is `abandoned`
 > (not `parent_gone`), concurrency is an optional parallel limit per model endpoint counted inside one
@@ -210,6 +216,10 @@ The task id comes first, so it is still in Claude's history after compaction. If
 ## 3. The pi child
 
 ### 3.1 Launch command (🧪 isolation flags checked on pi 0.87)
+
+The current child launch flags were rechecked on pi 1.5.2. A real child started
+through `PiDriver` with a local model completed an RPC request on that version.
+The existing launch test pins the isolation flags and explicitly supplied skills.
 
 ```
 pi --mode rpc --offline -na -ne -nc -np --no-themes [--no-mcp]
