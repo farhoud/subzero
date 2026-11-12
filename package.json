@@ -15,7 +15,9 @@
     "release:build": "npm run build && node scripts/build-plugin.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "release:branch": "npm run build && node scripts/publish-plugin-branch.mjs"
+    "release:branch": "npm run build && node scripts/publish-plugin-branch.mjs",
+    "release:pi:build": "npm run build && node scripts/build-pi-package.mjs",
+    "release:pi:branch": "npm run build && node scripts/publish-pi-branch.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
