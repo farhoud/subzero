@@ -1,9 +1,5 @@
 // @sigil implements design/delegation-service.sigil DelegationService
-//
-// The one entry every front end uses. It resolves the project root once per
-// service instance, runs the start-up sweep, asks the Kernel registry for the child port of
-// the host of an agent definition and hands it to TaskCore, and owns the live task
-// registry and the per-endpoint parallel limit. It names no host or child driver.
+
 import {
   FALLBACK_AGENT,
   DEFAULT_TIER,
@@ -253,6 +249,7 @@ export class DelegationService {
     });
     this.registry.set(task.taskId, task);
     this.taskTiers.set(task.taskId, tier);
+    void task.result.then(() => this.taskTiers.delete(task.taskId));
     if (delegation.parentSessionId !== undefined) {
       const session = this.sessions.get(delegation.parentSessionId) ?? new Set<string>();
       this.sessions.set(delegation.parentSessionId, session);
@@ -354,7 +351,6 @@ export class DelegationService {
     if (parentSessionId === undefined || parentSessionId === '') return { kind: 'unknown_session', taskIds: [], count: 0 };
     const taskIds = [...(this.sessions.get(parentSessionId) ?? [])];
     const tasks = taskIds.map((id) => this.registry.get(id)).filter((task): task is Task => task !== undefined && task.settledResult === undefined);
-    // Remove queued work before cancelling active runs can release it.
     const pending = tasks.filter((task) => task.state === 'Pending');
     const live = tasks.filter((task) => task.state !== 'Pending');
     await Promise.all(pending.map((task) => task.cancel()));

@@ -1,4 +1,3 @@
-// Shared request vocabulary for parent adapters.
 export const TIER_WORDS = [
   { tier: 'small', phrase: 'cheapest capable' },
   { tier: 'medium', phrase: 'mid-tier' },

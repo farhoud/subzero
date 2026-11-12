@@ -1,11 +1,9 @@
-// Prepare the pi package branch; push only when --push is supplied.
 import { spawnSync } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// The package branch is a build product; it must not be a default branch.
 const DEFAULT_BRANCHES = ['main', 'master'];
 
 function fail(message) {
@@ -45,7 +43,6 @@ const branch = options.branch;
 if (DEFAULT_BRANCHES.includes(branch)) fail(`the branch "${branch}" is the default branch; the pi branch must have another name`);
 if (!/^[A-Za-z0-9._/-]+$/.test(branch) || branch.includes('..')) fail(`"${branch}" is not a usable branch name`);
 
-// The remote: given, or origin of the repository the package is built from.
 let remote = options.remote;
 if (remote === undefined) {
   const origin = git(root, ['remote', 'get-url', 'origin'], { allowFailure: true });
@@ -53,7 +50,6 @@ if (remote === undefined) {
   remote = origin.stdout.trim();
 }
 
-// A push of a dirty tree would publish something no commit holds.
 const source = git(root, ['rev-parse', 'HEAD'], { allowFailure: true });
 const sourceCommit = source.status === 0 ? source.stdout.trim() : undefined;
 if (sourceCommit !== undefined && options.push) {
@@ -61,7 +57,6 @@ if (sourceCommit !== undefined && options.push) {
   if (dirty !== '') fail('the working tree has uncommitted changes; commit them first so the branch matches a commit of this repository');
 }
 
-// 1. Build the staged package, checking the version and required files.
 const scratch = mkdtempSync(path.join(tmpdir(), 'subzero-branch-'));
 const built = spawnSync(process.execPath, [path.join(here, 'build-pi-package.mjs'), '--root', root, '--out', path.join(scratch, 'out')], { encoding: 'utf8' });
 if (built.status !== 0) {
@@ -71,7 +66,6 @@ if (built.status !== 0) {
 const { version } = JSON.parse(built.stdout.trim().split('\n').at(-1));
 const stage = path.join(scratch, 'out');
 
-// 2. The branch's working folder: the remote branch when it exists (to add a commit on top), else an orphan.
 const work = path.join(scratch, 'branch');
 mkdirSync(work);
 git(work, ['init', '-q']);
@@ -80,12 +74,10 @@ const fetched = git(work, ['fetch', '-q', '--depth', '1', 'origin', `refs/heads/
 if (fetched.status === 0) git(work, ['checkout', '-q', '-B', branch, 'FETCH_HEAD']);
 else git(work, ['checkout', '-q', '--orphan', branch]);
 
-// 3. Replace everything with the staged package.
 for (const entry of readdirSync(work)) {
   if (entry !== '.git') rmSync(path.join(work, entry), { recursive: true, force: true });
 }
 cpSync(stage, work, { recursive: true });
-// 4. Commit, only when something changed.
 git(work, ['add', '-A', '--force']);
 const changed = git(work, ['status', '--porcelain']).stdout.trim() !== '';
 if (changed) {
@@ -96,7 +88,6 @@ if (changed) {
 }
 const commit = git(work, ['rev-parse', 'HEAD'], { allowFailure: true }).stdout.trim();
 
-// 5. Push only when asked and only when there is something new. Never forced.
 let pushed = false;
 if (options.push && changed) {
   git(work, ['push', '-q', 'origin', `${branch}:refs/heads/${branch}`]);
@@ -104,10 +95,8 @@ if (options.push && changed) {
 }
 const kept = !options.push && changed;
 if (kept) {
-  // Kept for inspection: nothing has left this machine.
   console.error(`publish-pi-branch: prepared pi package ${version} on branch "${branch}" in ${work}; run again with --push to publish it to ${remote}`);
 } else {
-  // Pushed, or nothing to publish: the scratch folder has done its job, so the result has no work folder.
   rmSync(scratch, { recursive: true, force: true });
 }
 if (!changed) console.error(`publish-pi-branch: branch "${branch}" already holds pi package ${version}; nothing to publish`);

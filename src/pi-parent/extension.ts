@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { Type } from 'typebox';
 import { configuredTierNames } from '../config/agent-config.js';
 import { TIER_WORDS } from '../config/tier-words.js';
-import type { DelegationService } from '../service/delegation-service.js';
+import type { DelegationService, TaskListing } from '../service/delegation-service.js';
 import { describeTaskReply, listingStatus, withNotice } from '../service/status-text.js';
 import { mapPiRequest } from './request.js';
 import { sendCompletion, sendStopped } from './notices.js';
@@ -14,8 +14,9 @@ const names = { collect: 'subzero_await', cancel: 'subzero_cancel' };
 const result = (text: string, isError = false) => ({ content: [{ type: 'text' as const, text }], details: {}, ...(isError ? { isError: true } : {}) });
 const describe = (reply: Parameters<typeof describeTaskReply>[0]) =>
   withNotice(describeTaskReply(reply, undefined, names), 'notice' in reply ? reply.notice : undefined);
+const formatSessionListing = (tasks: TaskListing[]) =>
+  tasks.length ? tasks.map((task) => `${task.taskId} · ${task.agent} · ${listingStatus(task)}`).join('\n') : 'no tasks';
 
-/** The entry point supplies a session core; the adapter never receives a driver. */
 export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: ExtensionContext) => DelegationService, killRemaining: () => void = () => {}, ownFile = fileURLToPath(import.meta.url)): void {
   let service: DelegationService | undefined;
   let sessionId = '';
@@ -60,7 +61,7 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
           ? `${phrase} (${tier}): pass model: "${tier}".`
           : `${phrase} (${tier}): not configured, omit model.`),
       ].join('\n');
-    } catch { /* The request returns the load error. */ }
+    } catch {}
     pi.setActiveTools(pi.getActiveTools());
     warning = clashWarning(pi, ownFile);
     if (warning) {
@@ -97,9 +98,7 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
     async execute(_id, args, signal, _update, ctx) {
       return respond(async () => {
         const svc = getService();
-        const preflight = mapPiRequest(args, [], sessionId);
-        if ('error' in preflight) throw new Error(preflight.error);
-        const mapped = mapPiRequest(args, configuredTierNames(projectRoot), sessionId);
+        const mapped = mapPiRequest(args, () => configuredTierNames(projectRoot), sessionId);
         if ('error' in mapped) throw new Error(mapped.error);
         const forced = ctx.mode === 'print' || ctx.mode === 'json';
         const wait = forced || args.async === false;
@@ -152,7 +151,7 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
       return respond(async () => {
         if (args.task) return describe(await getService().collect(args.task));
         const tasks = await getService().list(sessionId);
-        return tasks.length ? tasks.map((task) => `${task.taskId} · ${task.agent} · ${listingStatus(task)}`).join('\n') : 'no tasks';
+        return formatSessionListing(tasks);
       });
     },
   });
@@ -209,7 +208,7 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
       }
       if (action) { ctx.ui.notify('Usage: /subzero [attach <id> | cancel [id]]'); return; }
       const tasks = await getService().list(sessionId);
-      const listing = tasks.length ? tasks.map((task) => `${task.taskId} · ${task.agent} · ${listingStatus(task)}`).join('\n') : 'no tasks';
+      const listing = formatSessionListing(tasks);
       ctx.ui.notify(warning ? `${listing}\n${warning}` : listing);
     },
   });

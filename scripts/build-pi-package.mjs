@@ -1,4 +1,3 @@
-// Stage the pi package from the built extension. The destination must be empty.
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +26,7 @@ if (existsSync(out) && readdirSync(out).length) {
   const entries = readdirSync(out);
   const manifestFile = path.join(out, 'package.json');
   let previous;
-  try { previous = JSON.parse(readFileSync(manifestFile, 'utf8')); } catch { /* Not a stage we own. */ }
+  try { previous = JSON.parse(readFileSync(manifestFile, 'utf8')); } catch {}
   const dist = path.join(out, 'dist');
   if (previous?.name !== 'subzero-pi' || entries.some((entry) => !allowed.has(entry)) ||
       (existsSync(dist) && readdirSync(dist).some((entry) => entry !== 'pi-extension.js'))) {

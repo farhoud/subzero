@@ -18,14 +18,14 @@ export interface PiRequest {
 
 export type PiRequestResult = { delegation: Delegation; notice?: string } | { error: string };
 
-export function mapPiRequest(request: PiRequest, tiers: readonly string[], sessionId: string): PiRequestResult {
+export function mapPiRequest(request: PiRequest, tiers: readonly string[] | (() => readonly string[]), sessionId: string): PiRequestResult {
   if (request.worktree || request.isolation || request.context === 'fork') {
     return { error: 'subzero isolation is not supported yet; worktree and fork requests cannot run.' };
   }
   if (request.action !== undefined || Object.keys(request).some((key) => key.startsWith('workflow'))) {
     return { error: 'Use subzero_tasks, subzero_await or subzero_cancel to manage tasks.' };
   }
-  const mapped = mapRequest(request.agent, request.model, tiers);
+  const mapped = mapRequest(request.agent, request.model, typeof tiers === 'function' ? tiers() : tiers);
   const delegation: Delegation = {
     briefText: request.task,
     parentSessionId: sessionId,
