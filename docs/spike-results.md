@@ -117,3 +117,26 @@ Plan: [docs/plans/2026-11-06-0953-feat-tiered-subagent-routing-plan.md](plans/20
 ## Decision
 
 _Written by the user, citing the table above: build subzero v0.2 or not, and why._
+
+## Parent adapter platform probe (2026-11-12)
+
+On pi 1.5.2, `pi.sendMessage` with `{ triggerTurn: true, deliverAs: "steer" }`
+starts a turn when idle and steers a running turn, according to the installed
+extension documentation. A temporary extension sent that message to an idle
+RPC session, and the local model ran to `agent_settled`. The same documentation
+says `agent_settled.aborted` identifies an aborted turn, including Escape; the
+interactive Escape check remains part of the live verification.
+
+On Claude Code 2.1.322, temporary local MCP servers advertised optional task
+support to both an interactive session and `claude -p`. Each session called the
+test tool without the MCP task parameter. These observations do not establish
+that every Claude configuration behaves the same way. SDK 1.32.2 implements
+the low-level task protocol, but these calls do not demonstrate that the client
+will select it. No reliable environment flag distinguishing the two modes was
+established.
+
+A separate interactive probe registered an `asyncRewake` Stop hook. After the
+first assistant turn ended, the hook exited with code 2 and feedback; Claude
+started another turn without a user prompt, and the second Stop hook ran. This
+confirms the hook wake mechanism for the fallback. The probe used only temporary
+files and did not install a hook in the project.
