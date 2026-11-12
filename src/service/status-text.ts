@@ -107,3 +107,17 @@ export function withNotice(text: string, notice: string | undefined): string {
 export function listingStatus(t: TaskListing, now = Date.now()): string {
   return t.status === 'running' ? formatStatusLine(statusFacts(t), now) : t.status;
 }
+
+export function completionNotice(taskId: string, status: string, live: TaskListing[], collectTool: string, now = Date.now()): string {
+  const lines = [`task ${taskId} ${status}; collect its result with ${collectTool}.`];
+  if (live.length > 0) {
+    lines.push('Still running:');
+    for (const task of live) lines.push(`- ${task.taskId} · ${task.agent} · ${listingStatus(task, now)}`);
+    lines.push('Wait for these tasks before using their results together.');
+  }
+  return lines.join('\n');
+}
+
+export function stopNotice(taskId: string): string {
+  return `task ${taskId} was stopped; no action is needed.`;
+}

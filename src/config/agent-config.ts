@@ -16,7 +16,7 @@ export const AGENT_FILE = path.join('.agents', 'subzero.yaml');
 export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
-export const DEFAULT_TIER = 'default';
+export const DEFAULT_TIER = 'medium';
 export const GENERAL_AGENT = 'general';
 export const FALLBACK_AGENT = 'fallback';
 
@@ -101,10 +101,17 @@ export class LoadError extends Error {
   }
 }
 
-/** The one load error that `init` repairs by adding the default tier. */
+export class MissingAgentFileError extends LoadError {
+  constructor(agentFile: string) {
+    super(`agent file is missing: ${agentFile}; run subzero init`);
+    this.name = 'MissingAgentFileError';
+  }
+}
+
+/** The one load error that `init` repairs by adding the medium tier. */
 export class MissingDefaultTierError extends LoadError {
   constructor() {
-    super('the default tier is required in models.tiers when agents holds an entry');
+    super('the medium tier is required in models.tiers; run subzero init');
     this.name = 'MissingDefaultTierError';
   }
 }
@@ -148,7 +155,7 @@ export class TierError extends Error {
   }
 }
 
-/** `init` found a default tier on another host than the one it was given. */
+/** `init` found a medium tier on another host than the one it was given. */
 export class StarterHostConflictError extends Error {
   readonly code = 'starter_host_conflict';
   constructor(
@@ -156,8 +163,8 @@ export class StarterHostConflictError extends Error {
     readonly givenHost: string,
   ) {
     super(
-      `the default tier of the agent file is on the host "${existingHost}", not "${givenHost}"; ` +
-        'nothing was written. Edit the default tier, or run init with that host.',
+      `the medium tier of the agent file is on the host "${existingHost}", not "${givenHost}"; ` +
+        'nothing was written. Edit the medium tier, or run init with that host.',
     );
     this.name = 'StarterHostConflictError';
   }
@@ -212,12 +219,12 @@ function readAgentText(agentFile: string): string {
     return readFileSync(agentFile, 'utf8');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') throw new LoadError(`agent file is missing: ${agentFile}`);
+    if (code === 'ENOENT') throw new MissingAgentFileError(agentFile);
     throw new LoadError(`agent file is unreadable: ${agentFile} (${code ?? String(err)})`);
   }
 }
 
-function parseCatalog(text: string, agentFile: string): AgentCatalog {
+function parseCatalog(text: string, agentFile: string, allowMissingStarter = false): AgentCatalog {
   const malformed = (detail: string) => new LoadError(`agent file is malformed: ${agentFile}: ${detail}`);
   let parsed: unknown;
   try {
@@ -233,9 +240,9 @@ function parseCatalog(text: string, agentFile: string): AgentCatalog {
   const endpointsMap = doc.endpoints ?? {};
   if (!isRecord(skillsMap)) throw malformed('"skills" must be a map');
   if (!isRecord(endpointsMap)) throw malformed('"endpoints" must be a map');
-  if (doc.models !== undefined && !isRecord(doc.models)) throw malformed('"models" must be a map');
+  if (doc.models !== undefined && !(allowMissingStarter && doc.models === null) && !isRecord(doc.models)) throw malformed('"models" must be a map');
   const modelsMap = (doc.models ?? {}) as Record<string, unknown>;
-  if (modelsMap.tiers !== undefined && !isRecord(modelsMap.tiers)) throw malformed('"models.tiers" must be a map');
+  if (modelsMap.tiers !== undefined && !(allowMissingStarter && modelsMap.tiers === null) && !isRecord(modelsMap.tiers)) throw malformed('"models.tiers" must be a map');
 
   const baseDir = path.dirname(agentFile);
   const skillFolders = new Map<string, string>();
@@ -280,7 +287,11 @@ function parseCatalog(text: string, agentFile: string): AgentCatalog {
     }
   }
 
-  if (entries.size > 0 && !tiers.has(DEFAULT_TIER)) throw new MissingDefaultTierError();
+  if (!allowMissingStarter) {
+    if (!tiers.has(DEFAULT_TIER)) throw new MissingDefaultTierError();
+    if (!entries.has(GENERAL_AGENT)) throw new LoadError('the general agent is required; run subzero init');
+    if (!entries.has(FALLBACK_AGENT)) throw new LoadError('the fallback agent is required; run subzero init');
+  }
 
   return { agentFile, entries, tiers, routing, limits };
 }
@@ -482,7 +493,7 @@ export interface StarterSpec {
   fallbackTools: string[];
 }
 
-export type StarterEntry = 'default' | 'general' | 'fallback';
+export type StarterEntry = 'medium' | 'general' | 'fallback';
 
 export interface StarterResult {
   added: StarterEntry[];
@@ -490,7 +501,7 @@ export interface StarterResult {
 }
 
 /**
- * Add the default tier, `general` and `fallback`, each only when the agent file lacks
+ * Add the medium tier, `general` and `fallback`, each only when the agent file lacks
  * it, with no skills and every existing line untouched. Writes nothing on any refusal.
  */
 export function addStarterEntries(projectRoot: string, spec: StarterSpec): StarterResult {
@@ -503,12 +514,7 @@ export function addStarterEntries(projectRoot: string, spec: StarterSpec): Start
   }
 
   if (text !== null) {
-    try {
-      parseCatalog(text, agentFile);
-    } catch (err) {
-      // A missing default tier is the one thing init repairs.
-      if (!(err instanceof MissingDefaultTierError)) throw err;
-    }
+    parseCatalog(text, agentFile, true);
   }
 
   const original = text ?? '';
@@ -523,7 +529,7 @@ export function addStarterEntries(projectRoot: string, spec: StarterSpec): Start
   const hasDefault = doc.hasIn(['models', 'tiers', DEFAULT_TIER]);
   const hasGeneral = doc.hasIn(['agents', GENERAL_AGENT]);
   const hasFallback = doc.hasIn(['agents', FALLBACK_AGENT]);
-  note('default', hasDefault);
+  note('medium', hasDefault);
   note('general', hasGeneral);
   note('fallback', hasFallback);
   if (result.added.length === 0) return result;
@@ -548,24 +554,63 @@ export function addStarterEntries(projectRoot: string, spec: StarterSpec): Start
     return { end: node.range[1], indent: ' '.repeat(first - (original.lastIndexOf('\n', first - 1) + 1)) };
   };
   const insert = (at: number, body: string) => inserts.push({ at, text: (at > 0 && original[at - 1] !== '\n' ? '\n' : '') + body });
+  const insertInline = (keys: string[], entries: Record<string, unknown>): boolean => {
+    const node = doc.getIn(keys, true);
+    if (node === undefined || node === null) return false;
+    const range = (node as { range?: [number, number, number] | null }).range;
+    if (range === undefined || range === null) return false;
+    const rendered = flow(entries);
+    if (isMap(node) && node.flow === true) {
+      const contents = rendered.slice(1, -1).trim();
+      const source = original.slice(range[0], range[1]);
+      if (source.includes('\n')) {
+        const last = node.items.at(-1)?.value as { range?: [number, number, number] } | undefined;
+        if (last?.range !== undefined) {
+          const afterLast = original.slice(last.range[1], range[1] - 1).split('#', 1)[0]!;
+          if (!afterLast.includes(',')) inserts.push({ at: last.range[1], text: ',' });
+        }
+        const close = range[1] - 1;
+        const lineStart = original.lastIndexOf('\n', close - 1) + 1;
+        const indent = original.slice(lineStart, close);
+        inserts.push({ at: close, text: `  ${contents}\n${indent}` });
+        return true;
+      }
+      const trailingComma = original.slice(range[0], range[1] - 1).trimEnd().endsWith(',');
+      inserts.push({ at: range[1] - 1, text: `${node.items.length && !trailingComma ? ', ' : ' '}${contents} ` });
+      return true;
+    }
+    if (typeof node === 'object' && 'value' in node && node.value === null) {
+      inserts.push({ at: range[0], text: ` ${rendered}` });
+      return true;
+    }
+    return false;
+  };
 
   if (!hasDefault) {
-    const tiers = mapAt(['models', 'tiers']);
-    const models = tiers === undefined ? mapAt(['models']) : undefined;
-    if (tiers !== undefined) insert(tiers.end, defaultLine(tiers.indent));
-    else if (models !== undefined) insert(models.end, `${models.indent}tiers:\n${defaultLine(`${models.indent}  `)}`);
-    else appended += `models:\n  tiers:\n${defaultLine('    ')}`;
+    const tierEntry = { [DEFAULT_TIER]: { host: spec.host, model: spec.model, thinking: spec.thinking } };
+    if (!insertInline(['models', 'tiers'], tierEntry) && !(!doc.hasIn(['models', 'tiers']) && insertInline(['models'], { tiers: tierEntry }))) {
+      const tiers = mapAt(['models', 'tiers']);
+      const models = tiers === undefined ? mapAt(['models']) : undefined;
+      if (tiers !== undefined) insert(tiers.end, defaultLine(tiers.indent));
+      else if (models !== undefined) insert(models.end, `${models.indent}tiers:\n${defaultLine(`${models.indent}  `)}`);
+      else appended += `models:\n  tiers:\n${defaultLine('    ')}`;
+    }
   }
-  const agentsAt = mapAt(['agents']);
-  const indent = agentsAt?.indent ?? '  ';
-  let agentBody = '';
-  if (!hasGeneral) agentBody += agentLines(GENERAL_AGENT, spec.generalTools, indent);
-  if (!hasFallback) agentBody += agentLines(FALLBACK_AGENT, spec.fallbackTools, indent);
-  if (agentBody !== '') {
-    if (agentsAt !== undefined) insert(agentsAt.end, agentBody);
-    else if (doc.has('agents')) {
-      throw new LoadError('agent file: agents must be a block-style map for init to add entries to it');
-    } else appended += `agents:\n${agentBody}`;
+  if (!hasGeneral || !hasFallback) {
+    const entries: Record<string, unknown> = {};
+    if (!hasGeneral) entries[GENERAL_AGENT] = { tools: spec.generalTools, timeout: spec.timeout };
+    if (!hasFallback) entries[FALLBACK_AGENT] = { tools: spec.fallbackTools, timeout: spec.timeout };
+    if (!insertInline(['agents'], entries)) {
+      const agentsAt = mapAt(['agents']);
+      const indent = agentsAt?.indent ?? '  ';
+      let agentBody = '';
+      if (!hasGeneral) agentBody += agentLines(GENERAL_AGENT, spec.generalTools, indent);
+      if (!hasFallback) agentBody += agentLines(FALLBACK_AGENT, spec.fallbackTools, indent);
+      if (agentsAt !== undefined) insert(agentsAt.end, agentBody);
+      else if (doc.has('agents')) {
+        throw new LoadError('agent file: agents must be a map for init to add entries to it');
+      } else appended += `agents:\n${agentBody}`;
+    }
   }
 
   let next = original;

@@ -22,13 +22,28 @@ const indexLines = (root: string) => {
 };
 
 describe('DelegationService', () => {
-  it('returns the unknown agent error and writes no task record', async () => {
-    const root = makeProject();
-    const svc = service(root, manualPort().port);
-    await expect(svc.delegate({ agent: 'nobody', briefText: 'b' }, { wait: false })).rejects.toBeInstanceOf(UnknownAgentError);
-    expect(existsSync(path.join(root, '.agents', 'subzero'))).toBe(false);
+  it('cancels only live and queued tasks of the selected session', async () => {
+    const { port, started } = manualPort();
+    const svc = service(makeProject(), port);
+    const a = await svc.delegate({ agent: 'helper', briefText: 'a', parentSessionId: 'A' }, { wait: false });
+    const queued = await svc.delegate({ agent: 'other', briefText: 'queued', parentSessionId: 'A' }, { wait: false });
+    const otherA = await svc.delegate({ agent: 'free', briefText: 'a2', parentSessionId: 'A' }, { wait: false });
+    const b = await svc.delegate({ agent: 'free', briefText: 'b', parentSessionId: 'B' }, { wait: false });
+    if (a.kind === 'result' || queued.kind === 'result' || otherA.kind === 'result' || b.kind === 'result') throw new Error('expected live tasks');
+    expect((await svc.listLiveSession('A')).map((task) => task.taskId).sort()).toEqual([a.taskId, queued.taskId, otherA.taskId].sort());
+    const notice = await svc.notice(a.taskId, 'completed', 'A', 'subzero_await');
+    expect(notice).toContain(queued.taskId);
+    expect(notice).toContain(otherA.taskId);
+    expect(notice).not.toContain(b.taskId);
+    expect(await svc.notice(a.taskId, 'cancelled', 'A', 'subzero_await')).toMatch(/stopped.*no action/i);
+    expect(await svc.cancelSession(undefined)).toEqual({ kind: 'unknown_session', taskIds: [], count: 0 });
+    expect(await svc.cancelSession('A')).toEqual({ kind: 'cancelled', taskIds: [a.taskId, queued.taskId, otherA.taskId], count: 3 });
+    expect((await svc.collect(a.taskId))).toMatchObject({ kind: 'result', result: { status: 'cancelled' } });
+    expect((await svc.collect(queued.taskId))).toMatchObject({ kind: 'result', result: { status: 'cancelled' } });
+    expect((await svc.collect(otherA.taskId))).toMatchObject({ kind: 'result', result: { status: 'cancelled' } });
+    expect((await svc.collect(b.taskId)).kind).toBe('running');
+    started[2]!.settle();
   });
-
   it('returns the load error while the agent file is malformed and writes no task record', async () => {
     const root = makeProject();
     writeFileSync(path.join(root, '.agents', 'subzero.yaml'), 'agents: [');
@@ -246,15 +261,15 @@ describe('DelegationService', () => {
   });
 
   it('runs general when no agent is named, and returns the unknown agent error without a general entry', async () => {
-    const withGeneral = makeProject(DEFAULT_YAML + '  general:\n    tools: [read, write]\n    timeout: 9\n');
+    const withGeneral = makeProject(DEFAULT_YAML);
     const frozen: any[] = [];
     const { port } = manualPort();
     const svc = service(withGeneral, { start: (request, onEvent) => (frozen.push(request.agent), port.start(request, onEvent)) });
     await svc.delegate({ briefText: 'go' }, { wait: false });
-    expect(frozen[0]).toMatchObject({ name: 'general', model: 'local/qwen', tools: ['read', 'write'], timeout: 9 });
+    expect(frozen[0]).toMatchObject({ name: 'general', model: 'local/qwen', tools: ['read', 'bash', 'write', 'edit'], timeout: 9 });
 
-    const bare = service(makeProject(), manualPort().port);
-    await expect(bare.delegate({ briefText: 'go' }, { wait: false })).rejects.toThrow(/no agent was named/);
+    const bare = service(makeProject(DEFAULT_YAML.replace(/  general:\n    tools: \[read, bash, write, edit\]\n    timeout: 9\n/, '')), manualPort().port);
+    await expect(bare.delegate({ briefText: 'go' }, { wait: false })).rejects.toThrow(/general.*required/);
   });
 
   it('returns the tier error, naming the host and the supported hosts, when the tier host has no driver, and makes no task', async () => {
@@ -396,8 +411,8 @@ describe('DelegationService tiers, general and fallback', () => {
     const none = await svc.delegate({ briefText: 'go' }, { wait: false });
     started[0]!.settle(); // the default endpoint runs one child at a time
     const named = await svc.delegate({ agent: 'general', briefText: 'go' }, { wait: false });
-    expect(frozen[0]).toMatchObject({ name: 'general', model: 'local/qwen' });
-    expect(frozen[1]).toMatchObject({ name: 'general', model: 'local/qwen' });
+    expect(frozen[0]).toMatchObject({ name: 'general', model: 'r9700/Qwen3.8' });
+    expect(frozen[1]).toMatchObject({ name: 'general', model: 'r9700/Qwen3.8' });
     expect(none).not.toHaveProperty('notice');
     expect(named).not.toHaveProperty('notice');
   });
@@ -407,7 +422,7 @@ describe('DelegationService tiers, general and fallback', () => {
     await svc.delegate({ agent: 'reviewer', briefText: 'go', tier: 'large' }, { wait: false });
     await svc.delegate({ agent: 'reviewer', briefText: 'go' }, { wait: false });
     expect(frozen[0]).toMatchObject({ name: 'reviewer:large', model: 'cloud/reviewer-large', thinking: 'high' });
-    expect(frozen[1]).toMatchObject({ name: 'reviewer', model: 'local/qwen' });
+    expect(frozen[1]).toMatchObject({ name: 'reviewer', model: 'r9700/Qwen3.8' });
   });
 
   it('returns the tier error for an unknown tier or a tier host with no driver, and makes no task', async () => {
@@ -449,17 +464,17 @@ describe('DelegationService tiers, general and fallback', () => {
     const root = makeProject(TIERED_YAML.replace(/  fallback:\n    tools: \[read, grep\]\n    timeout: 8\n/, ''));
     const svc = service(root, manualPort().port);
     const err = await svc.delegate({ agent: 'reviewr', briefText: 'go' }, { wait: false }).catch((e) => e);
-    expect(err).toBeInstanceOf(UnknownAgentError);
-    expect(err.message).toMatch(/helper, other, free, general, reviewer/);
+    expect(err).toBeInstanceOf(LoadError);
+    expect(err.message).toMatch(/fallback.*required/);
     expect(indexLines(root)).toEqual([]);
   });
 
   it('never falls back for general or no agent when there is no general entry', async () => {
-    const root = makeProject(DEFAULT_YAML + '  fallback:\n    tools: [read]\n    timeout: 8\n');
+    const root = makeProject(DEFAULT_YAML.replace(/  general:\n    tools: \[read, bash, write, edit\]\n    timeout: 9\n/, ''));
     const svc = service(root, manualPort().port);
-    await expect(svc.delegate({ agent: 'general', briefText: 'go' }, { wait: false })).rejects.toBeInstanceOf(UnknownAgentError);
-    await expect(svc.delegate({ briefText: 'go' }, { wait: false })).rejects.toBeInstanceOf(UnknownAgentError);
-    await expect(svc.delegate({ briefText: 'go', tier: 'small' }, { wait: false })).rejects.toBeInstanceOf(UnknownAgentError);
+    await expect(svc.delegate({ agent: 'general', briefText: 'go' }, { wait: false })).rejects.toBeInstanceOf(LoadError);
+    await expect(svc.delegate({ briefText: 'go' }, { wait: false })).rejects.toBeInstanceOf(LoadError);
+    await expect(svc.delegate({ briefText: 'go', tier: 'small' }, { wait: false })).rejects.toBeInstanceOf(LoadError);
     expect(indexLines(root)).toEqual([]);
   });
 

@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -48,7 +48,15 @@ async function connectManual(yaml?: string) {
   return { root, service, started, call, textOf, idIn };
 }
 
-describe('McpServer', () => {
+describe('ClaudeMcpServer', () => {
+  it('passes back a delegation when the agent file is missing', async () => {
+    const { root, call, textOf, service } = await connect();
+    rmSync(path.join(root, '.agents', 'subzero.yaml'));
+    const result: any = await call('delegate', { brief: 'go' });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/missing.*subzero init.*Agent tool.*passback/s);
+    expect(await service.list()).toEqual([]);
+  });
   it('exposes four tools and only delegate and await are always loaded', async () => {
     const { client } = await connect();
     const { tools } = await client.listTools();
@@ -97,14 +105,6 @@ describe('McpServer', () => {
     const [task] = await service.list();
     await until(() => service.store.readTask(task!.taskId)!.status === 'cancelled');
     await until(() => !isAlive(fake.log()[0].pid));
-  });
-
-  it('returns a tool error naming every configured agent for an unknown agent, with no task made', async () => {
-    const { call, service } = await connect();
-    const result: any = await call('delegate', { agent: 'nobody', brief: 'go' });
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/helper, other, free/);
-    expect(await service.list()).toEqual([]);
   });
 
   it('returns the unresolved root error as a tool error that says not to retry', async () => {
@@ -222,7 +222,7 @@ describe('McpServer', () => {
   });
 });
 
-describe('McpServer tiers, general, fallback and await bounds', () => {
+describe('ClaudeMcpServer tiers, general, fallback and await bounds', () => {
   const taskIdOf = (text: string) => /sz-[a-z2-7]{6}/.exec(text)![0];
 
   it('delegate takes an optional agent and a tier, and requires only the brief', async () => {
@@ -252,7 +252,7 @@ describe('McpServer tiers, general, fallback and await bounds', () => {
     const text = textOf(await call('delegate', { brief: 'go' }));
     expect(text.split('\n')[0]).toMatch(/^task: sz-[a-z2-7]{6} · general · status: completed/);
     const argv = fake.log()[0].argv;
-    expect(argv[argv.indexOf('--model') + 1]).toBe('local/qwen');
+    expect(argv[argv.indexOf('--model') + 1]).toBe('r9700/Qwen3.8');
     const named = textOf(await call('delegate', { agent: 'general', brief: 'go' }));
     expect(named.split('\n')[0]).toMatch(/· general · status: completed/);
   });
@@ -264,7 +264,7 @@ describe('McpServer tiers, general, fallback and await bounds', () => {
     const plain = textOf(await call('delegate', { agent: 'reviewer', brief: 'go' }));
     expect(plain.split('\n')[0]).toMatch(/· reviewer · status: completed/);
     const models = fake.log().filter((l) => l.argv).map((l) => l.argv[l.argv.indexOf('--model') + 1]);
-    expect(models).toEqual(['cloud/reviewer-large', 'local/qwen']);
+    expect(models).toEqual(['cloud/reviewer-large', 'r9700/Qwen3.8']);
   });
 
   it('returns an unknown tier as a tool error that lists the tiers and points to a pass-back, and launches nothing', async () => {
@@ -272,7 +272,7 @@ describe('McpServer tiers, general, fallback and await bounds', () => {
     const result: any = await call('delegate', { brief: 'go', tier: 'huge' });
     expect(result.isError).toBe(true);
     const text = textOf(result);
-    expect(text).toMatch(/unknown tier "huge"; configured tiers: default, small, cloud, medium, large, far/);
+    expect(text).toMatch(/unknown tier "huge"; configured tiers: default, medium, small, cloud, large, far/);
     expect(text).toMatch(/Agent tool/);
     expect(text).toMatch(/passback/);
     expect(fake.log()).toEqual([]);
@@ -313,14 +313,14 @@ describe('McpServer tiers, general, fallback and await bounds', () => {
     const noFallback = await connect({}, null, undefined, TIERED_YAML.replace(/  fallback:\n    tools: \[read, grep\]\n    timeout: 8\n/, ''));
     const unknown: any = await noFallback.call('delegate', { agent: 'reviewr', brief: 'go' });
     expect(unknown.isError).toBe(true);
-    expect(noFallback.textOf(unknown)).toMatch(/unknown agent "reviewr".*general, reviewer/);
+    expect(noFallback.textOf(unknown)).toMatch(/fallback.*required/);
     expect(await noFallback.service.list()).toEqual([]);
 
     const noGeneral = await connect({}, null, undefined, makeProjectYamlWithoutGeneral());
     for (const args of [{ agent: 'general', brief: 'go' }, { brief: 'go' }]) {
       const result: any = await noGeneral.call('delegate', args);
       expect(result.isError).toBe(true);
-      expect(noGeneral.textOf(result)).toMatch(/configured agents: /);
+      expect(noGeneral.textOf(result)).toMatch(/general.*required/);
     }
     expect(noGeneral.fake.log()).toEqual([]);
     expect(await noGeneral.service.list()).toEqual([]);
@@ -436,7 +436,7 @@ function makeProjectYamlWithoutGeneral(): string {
   return TIERED_YAML.replace(/  general:\n    tools: \[read, bash, write, edit\]\n    timeout: 9\n/, '');
 }
 
-describe('McpServer process', () => {
+describe('ClaudeMcpServer process', () => {
   beforeAll(() => {
     execFileSync(process.execPath, ['build.mjs'], { cwd: REPO });
   });

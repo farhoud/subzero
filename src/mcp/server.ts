@@ -1,10 +1,10 @@
-// @sigil implements design/mcp-server.sigil McpServer
+// @sigil implements design/claude-mcp-server.sigil ClaudeMcpServer
 //
 // The plugin's MCP server: four tools backed by DelegationService. Claude Code
 // names them mcp__plugin_subzero_subzero__<tool>.
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { LoadError, routableTiers, TierError, UnknownAgentError, UnresolvedRootError } from '../config/agent-config.js';
+import { LoadError, MissingAgentFileError, routableTiers, TierError, UnknownAgentError, UnresolvedRootError } from '../config/agent-config.js';
 import { isTaskId } from '../core/ids.js';
 import { UnsupportedHostError } from '../kernel/kernel.js';
 import { EmptyBriefError, type DelegationService } from '../service/delegation-service.js';
@@ -91,7 +91,7 @@ function toolError(err: unknown): CallToolResult {
       true,
     );
   }
-  if (err instanceof TierError || err instanceof UnsupportedHostError) return text(`${err.message}. ${PASS_BACK}`, true);
+  if (err instanceof TierError || err instanceof UnsupportedHostError || err instanceof MissingAgentFileError) return text(`${err.message}. ${PASS_BACK}`, true);
   if (err instanceof UnknownAgentError || err instanceof LoadError || err instanceof EmptyBriefError) {
     return text(err.message, true);
   }

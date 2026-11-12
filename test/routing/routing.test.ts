@@ -22,7 +22,7 @@ function project(yaml?: string): string {
 }
 
 const tier = (name: string, model: string) => `    ${name}: { host: pi, model: ${model}, thinking: low }\n`;
-const GENERAL = 'agents:\n  general:\n    tools: [read, bash]\n    timeout: 60\n';
+const GENERAL = 'agents:\n  general:\n    tools: [read, bash]\n    timeout: 60\n  fallback:\n    tools: [read]\n    timeout: 60\n';
 const config = (...names: string[]) =>
   `models:\n  tiers:\n${tier('default', 'local/d')}${names.map((n) => tier(n, `local/${n}`)).join('')}${GENERAL}`;
 
@@ -116,11 +116,11 @@ describe('routingContext', () => {
     expect(routingContext(project())).toBeUndefined();
   });
 
-  it('AE3: returns nothing with no tiers, with no agents, with a default tier only and without a general entry', () => {
-    expect(routingContext(project('endpoints: {}\n'))).toBeUndefined();
-    expect(routingContext(project(config()))).toBeUndefined();
-    expect(routingContext(project(`models:\n  tiers:\n${tier('default', 'local/d')}`))).toBeUndefined();
-    expect(routingContext(project(`models:\n  tiers:\n${tier('default', 'local/d')}${tier('medium', 'local/m')}agents:\n  helper:\n    description: x\n    tools: [read]\n    timeout: 5\n`))).toBeUndefined();
+  it('warns when required entries are missing', () => {
+    expect(routingContext(project('endpoints: {}\n'))).toMatch(/routing is off/);
+    expect(routingContext(project(config()))).toMatch(/medium/);
+    expect(routingContext(project(`models:\n  tiers:\n${tier('default', 'local/d')}`))).toMatch(/medium/);
+    expect(routingContext(project(`models:\n  tiers:\n${tier('medium', 'local/m')}agents:\n  helper:\n    description: x\n    tools: [read]\n    timeout: 5\n`))).toMatch(/general/);
   });
 
   it('returns a one-line warning for a file that exists and fails to load', () => {

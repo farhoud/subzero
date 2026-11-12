@@ -51,16 +51,8 @@ describe('Cli', () => {
     expect(record.brief).not.toMatch(/Reply size/);
   });
 
-  it('prints the unknown agent error and exits non-zero without making a task', async () => {
-    const root = makeProject();
-    const { run, err } = cli(root);
-    expect(await run('run', '--agent', 'nobody', 'x')).toBe(1);
-    expect(err.join('\n')).toMatch(/unknown agent "nobody"; configured agents: helper, other, free/);
-    expect(existsSync(path.join(root, '.agents', 'subzero'))).toBe(false);
-  });
-
   it('says on stdout that the named agent is not configured when the fallback agent ran instead', async () => {
-    const root = makeProject(DEFAULT_YAML + '  fallback:\n    tools: [read]\n    timeout: 30\n');
+    const root = makeProject(DEFAULT_YAML);
     const { run, out } = cli(root);
     expect(await run('run', '--agent', 'reviewr', 'x')).toBe(0);
     const text = out.join('\n');
@@ -71,7 +63,7 @@ describe('Cli', () => {
   });
 
   it('runs general with no --agent option, and a lone argument is always the brief', async () => {
-    const root = makeProject(DEFAULT_YAML + '  general:\n    tools: [read]\n    timeout: 30\n');
+    const root = makeProject(DEFAULT_YAML);
     const { run, out } = cli(root);
     expect(await run('run', 'helper')).toBe(0);
     expect(out[0]).toMatch(/^task: sz-[a-z2-7]{6} · general · status: completed/);
@@ -80,7 +72,7 @@ describe('Cli', () => {
   });
 
   it('runs general at the default tier with the host, model and thinking of that tier', async () => {
-    const root = makeProject(DEFAULT_YAML + '  general:\n    tools: [read]\n    timeout: 30\n');
+    const root = makeProject(DEFAULT_YAML);
     const { run, out } = cli(root);
     await run('run', 'go');
     const taskId = /sz-[a-z2-7]{6}/.exec(out[0]!)![0];
@@ -89,10 +81,10 @@ describe('Cli', () => {
   });
 
   it('with no --agent and no general entry prints the unknown agent error and runs nothing, never fallback', async () => {
-    const root = makeProject(DEFAULT_YAML + '  fallback:\n    tools: [read]\n    timeout: 30\n');
+    const root = makeProject(DEFAULT_YAML.replace(/  general:\n    tools: \[read, bash, write, edit\]\n    timeout: 9\n/, ''));
     const { run, err } = cli(root);
     expect(await run('run', 'do it')).toBe(1);
-    expect(err.join('\n')).toMatch(/no agent was named.*helper, other, free, fallback/);
+    expect(err.join('\n')).toMatch(/general.*required/);
     expect(existsSync(path.join(root, '.agents', 'subzero'))).toBe(false);
   });
 
@@ -198,7 +190,7 @@ describe('Cli', () => {
       const root = tempDir();
       const { run, out } = cli(root);
       expect(await run('init', 'r9700/Qwen3.8')).toBe(0);
-      expect(out.join('\n')).toMatch(/added.*default.*general.*fallback/s);
+      expect(out.join('\n')).toMatch(/added.*medium.*general.*fallback/s);
       expect(getAgent(root, 'general')).toMatchObject({ host: 'pi', model: 'r9700/Qwen3.8', thinking: 'medium', timeout: 1200, tools: FULL, skills: [] });
       expect(getAgent(root, 'fallback')).toMatchObject({ tools: READ_ONLY, timeout: 1200 });
     });
@@ -222,7 +214,7 @@ describe('Cli', () => {
     });
 
     it('adds only the fallback agent beside an existing general agent, leaving its lines alone', async () => {
-      const text = `models:\n  tiers:\n    default: { host: pi, model: a/b, thinking: low }\nagents:\n  general:\n    tools: [read]\n    timeout: 7\n`;
+      const text = `models:\n  tiers:\n    medium: { host: pi, model: a/b, thinking: low }\nagents:\n  general:\n    tools: [read]\n    timeout: 7\n`;
       const root = makeProject(text);
       const { run, out } = cli(root);
       expect(await run('init', 'm/x')).toBe(0);
@@ -233,7 +225,7 @@ describe('Cli', () => {
     });
 
     it('refuses naming both hosts, exits non-zero and writes nothing when default is on another host', async () => {
-      const text = `models:\n  tiers:\n    default: { host: claude, model: a/b, thinking: low }\nagents:\n  general:\n    tools: [read]\n    timeout: 7\n`;
+      const text = `models:\n  tiers:\n    medium: { host: claude, model: a/b, thinking: low }\nagents:\n  general:\n    tools: [read]\n    timeout: 7\n`;
       const root = makeProject(text);
       const { run, err } = cli(root);
       expect(await run('init', 'm/x', '--host', 'pi')).toBe(1);
@@ -250,7 +242,7 @@ describe('Cli', () => {
     });
 
     it('prints the load error, exits non-zero and writes nothing when the file does not load', async () => {
-      const text = `models:\n  tiers:\n    default: { host: pi, model: a/b, thinking: low }\nagents:\n  a:\n    description: d\n    tools: [read]\n`;
+      const text = `models:\n  tiers:\n    medium: { host: pi, model: a/b, thinking: low }\nagents:\n  a:\n    description: d\n    tools: [read]\n`;
       const root = makeProject(text);
       const { run, err } = cli(root);
       expect(await run('init', 'm/x')).toBe(1);

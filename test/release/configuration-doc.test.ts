@@ -31,8 +31,10 @@ function yamlAfter(heading: string): string {
 const MINIMAL = `
 models:
   tiers:
-    default: { host: pi, model: local/x, thinking: low }
+    medium: { host: pi, model: local/x, thinking: low }
 agents:
+  general: { tools: [read], timeout: 5 }
+  fallback: { tools: [read], timeout: 5 }
 `;
 
 describe('docs/configuration.md', () => {
@@ -53,7 +55,7 @@ describe('docs/configuration.md', () => {
     expect(facts).toMatchObject({ model: 'local/qwen3-coder-30b', thinking: 'high', timeout: 120 });
     // General on a named tier runs that tier, recorded as general:medium.
     expect(resolveAgent(catalog, undefined, { tier: 'medium' })).toMatchObject({ name: 'general:medium', thinking: 'medium' });
-    expect(resolveAgent(catalog, undefined)).toMatchObject({ name: 'general', thinking: 'low' });
+    expect(resolveAgent(catalog, undefined)).toMatchObject({ name: 'general', thinking: 'medium' });
   });
 
   it('lists the thinking levels the loader accepts', () => {
@@ -96,7 +98,7 @@ describe('docs/configuration.md', () => {
   describe('Errors you may see', () => {
     const cases: [string, string][] = [
       ['agent file is malformed', 'agents: [\n'],
-      ['the default tier is required in models.tiers', 'agents:\n  general:\n    tools: [read]\n    timeout: 5\n'],
+      ['the medium tier is required in models.tiers', 'agents:\n  general:\n    tools: [read]\n    timeout: 5\n'],
       ['description is required', `${MINIMAL}  a:\n    tools: [read]\n    timeout: 5\n`],
       ['model cannot be set on an agent', `${MINIMAL}  a:\n    description: d\n    tools: [read]\n    timeout: 5\n    model: x/y\n`],
       ['unknown key "color"', `${MINIMAL}  a:\n    description: d\n    tools: [read]\n    timeout: 5\n    color: red\n`],

@@ -11,7 +11,7 @@ const HOOK = path.join(REPO, 'dist', 'agent-hook.js');
 const DELEGATE = 'mcp__plugin_subzero_subzero__delegate';
 
 const tier = (name: string, model: string) => `    ${name}: { host: pi, model: ${model}, thinking: low }\n`;
-const GENERAL = 'agents:\n  general:\n    tools: [read, bash]\n    timeout: 60\n';
+const GENERAL = 'agents:\n  general:\n    tools: [read, bash]\n    timeout: 60\n  fallback:\n    tools: [read]\n    timeout: 60\n';
 const config = (names: string[], extra = '') =>
   `${extra}models:\n  tiers:\n${tier('default', 'local/d')}${names.map((n) => tier(n, `local/${n}`)).join('')}${GENERAL}`;
 
@@ -154,10 +154,9 @@ describe('decideAgentSpawn', () => {
     expect(decideAgentSpawn(spawnOf('p', { model: 'sonnet' }), setup(undefined).ctx()).decision).toBe('allow');
   });
 
-  it('allows a sonnet spawn when only the small tier is routable, and a haiku spawn when only medium is', () => {
-    const a = setup(config(['small']));
-    expect(decideAgentSpawn(spawnOf('p', { model: 'sonnet' }), a.ctx()).decision).toBe('allow');
-    expect(decideAgentSpawn(spawnOf('q', { model: 'haiku' }), a.ctx())).toMatchObject({ decision: 'deny', tier: 'small' });
+  it('allows a haiku spawn when small is not configured', () => {
+    const a = setup(config(['medium']));
+    expect(decideAgentSpawn(spawnOf('p', { model: 'haiku' }), a.ctx()).decision).toBe('allow');
   });
 
   it('opus and fable: allowed when their prompt was not denied, denied when it was', () => {
@@ -176,10 +175,10 @@ describe('decideAgentSpawn', () => {
   });
 
   it('a denied prompt whose recorded tier is no longer routable follows the generic and alias rules instead', () => {
-    const { root, ctx } = setup(config(['medium']));
-    expect(decideAgentSpawn(spawnOf('p', { model: 'sonnet' }), ctx()).decision).toBe('deny');
-    writeFileSync(path.join(root, '.agents', 'subzero.yaml'), config(['large']));
-    // The deny memory holds medium, which is gone: opus is not mapped, so it is allowed.
+    const { root, ctx } = setup(config(['medium', 'small']));
+    expect(decideAgentSpawn(spawnOf('p', { model: 'haiku' }), ctx()).decision).toBe('deny');
+    writeFileSync(path.join(root, '.agents', 'subzero.yaml'), config(['medium', 'large']));
+    // The deny memory holds small, which is gone: opus is not mapped, so it is allowed.
     expect(decideAgentSpawn(spawnOf('p', { model: 'opus' }), ctx()).decision).toBe('allow');
     // A generic spawn with no model maps to large and is denied by the alias table.
     expect(decideAgentSpawn(spawnOf('p'), ctx())).toMatchObject({ decision: 'deny', tier: 'large' });

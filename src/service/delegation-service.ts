@@ -1,7 +1,7 @@
 // @sigil implements design/delegation-service.sigil DelegationService
 //
 // The one entry every front end uses. It resolves the project root once per
-// process, runs the start-up sweep, asks the Kernel registry for the child port of
+// service instance, runs the start-up sweep, asks the Kernel registry for the child port of
 // the host of an agent definition and hands it to TaskCore, and owns the live task
 // registry and the per-endpoint parallel limit. It names no host or child driver.
 import {
@@ -19,12 +19,13 @@ import { Task, TaskCore } from '../core/task-core.js';
 import { ENDED_STATES, type ChildRunState, type DomainEvent, type Result } from '../core/types.js';
 import type { Kernel } from '../kernel/kernel.js';
 import { TaskStore, type TaskStoreOptions, type TaskView } from '../store/task-store.js';
+import { completionNotice, stopNotice } from './status-text.js';
 
 /** The request of a front end. */
 export interface Delegation {
   /** The agent entry to run; none runs `general`. */
   agent?: string;
-  /** The model tier to run it on, `medium` or `tier:medium`; none runs the agent's own tier or `default`. */
+  /** The model tier to run it on, `medium` or `tier:medium`; none runs the agent's own tier or `medium`. */
   tier?: string;
   briefText: string;
   files?: string[];
@@ -181,6 +182,7 @@ export class DelegationService {
   private connected: Connected | null = null;
   private starting: Promise<Connected> | null = null;
   private readonly registry = new Map<string, Task>();
+  private readonly sessions = new Map<string, Set<string>>();
   private readonly limiter = new EndpointLimiter();
   private readonly warn: (message: string) => void;
 
@@ -246,6 +248,15 @@ export class DelegationService {
       ...(delegation.parentSessionId !== undefined ? { parentSessionId: delegation.parentSessionId } : {}),
     });
     this.registry.set(task.taskId, task);
+    if (delegation.parentSessionId !== undefined) {
+      const session = this.sessions.get(delegation.parentSessionId) ?? new Set<string>();
+      this.sessions.set(delegation.parentSessionId, session);
+      session.add(task.taskId);
+      void task.result.finally(() => {
+        session.delete(task.taskId);
+        if (session.size === 0) this.sessions.delete(delegation.parentSessionId!);
+      });
+    }
     if (options.onEvent) task.onEvent(options.onEvent);
     if (options.onState) task.onStateChange(options.onState);
     if (options.signal) {
@@ -333,6 +344,18 @@ export class DelegationService {
     return this.fromRecord(store, taskId);
   }
 
+  async cancelSession(parentSessionId: string | undefined): Promise<{ kind: 'unknown_session' | 'cancelled'; taskIds: string[]; count: number }> {
+    if (parentSessionId === undefined || parentSessionId === '') return { kind: 'unknown_session', taskIds: [], count: 0 };
+    const taskIds = [...(this.sessions.get(parentSessionId) ?? [])];
+    const tasks = taskIds.map((id) => this.registry.get(id)).filter((task): task is Task => task !== undefined && task.settledResult === undefined);
+    // Remove queued work before cancelling active runs can release it.
+    const pending = tasks.filter((task) => task.state === 'Pending');
+    const live = tasks.filter((task) => task.state !== 'Pending');
+    await Promise.all(pending.map((task) => task.cancel()));
+    await Promise.all(live.map((task) => task.cancel()));
+    return { kind: 'cancelled', taskIds: tasks.map((task) => task.taskId), count: tasks.length };
+  }
+
   async list(parentSessionId?: string): Promise<TaskListing[]> {
     const { store } = await this.connect();
     store.sweep();
@@ -341,6 +364,16 @@ export class DelegationService {
       const place = live !== undefined ? this.limiter.place(live) : null;
       return place !== null ? { ...view, queuePlace: place } : view;
     });
+  }
+
+  async listLiveSession(parentSessionId: string): Promise<TaskListing[]> {
+    const ids = this.sessions.get(parentSessionId) ?? new Set<string>();
+    return (await this.list(parentSessionId)).filter((task) => ids.has(task.taskId));
+  }
+
+  async notice(taskId: string, status: Result['status'], parentSessionId: string, collectTool: string): Promise<string> {
+    if (status === 'cancelled') return stopNotice(taskId);
+    return completionNotice(taskId, status, (await this.listLiveSession(parentSessionId)).filter((task) => task.taskId !== taskId), collectTool);
   }
 
   private fromRecord(store: TaskStore, taskId: string): CollectReply {

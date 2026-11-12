@@ -1,7 +1,7 @@
 // @sigil implements design/cli.sigil Cli
 //
 //   subzero init <model> [--host H] [--timeout S] [--thinking L]
-//                                    add the default tier, general and fallback entries
+//                                    add the medium tier, general and fallback entries
 //   subzero run [--agent A] <brief...>  delegate, wait and print the result (no --agent: general)
 //   subzero tasks                    list every task
 //   subzero attach <task id>         reopen the child session in the pi terminal interface
@@ -139,9 +139,9 @@ async function init(service: DelegationService, args: string[], io: CliIo, optio
     generalTools: tools.general,
     fallbackTools: tools.fallback,
   });
-  const name = (entry: string) => (entry === 'default' ? 'the default tier' : `the ${entry} agent`);
+  const name = (entry: string) => (entry === 'medium' ? 'the medium tier' : `the ${entry} agent`);
   if (result.added.length === 0) {
-    io.out('all three entries (the default tier, the general agent and the fallback agent) are already there; nothing changed');
+    io.out('all three entries (the medium tier, the general agent and the fallback agent) are already there; nothing changed');
     return 0;
   }
   io.out(`added ${result.added.map(name).join(', ')}`);
