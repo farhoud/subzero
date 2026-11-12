@@ -10,6 +10,7 @@ const entries = {
   hook: 'src/mcp/session-hook.ts',
   'agent-hook': 'src/routing/agent-hook.ts',
   cli: 'src/cli/main.ts',
+  'pi-extension': 'src/pi-parent/main.ts',
 };
 
 for (const [name, entry] of Object.entries(entries)) {
@@ -20,6 +21,7 @@ for (const [name, entry] of Object.entries(entries)) {
     platform: 'node',
     target: 'node22',
     format: 'esm',
+    ...(name === 'pi-extension' ? { external: ['@earendil-works/*', 'typebox'] } : {}),
     define: { __SUBZERO_VERSION__: JSON.stringify(version) },
     banner: {
       js: [
