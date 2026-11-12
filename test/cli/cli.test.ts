@@ -139,7 +139,7 @@ describe('Cli', () => {
     expect(err.at(-1)).toMatch(/task sz-queued is queued, not launched yet/);
     expect(err.at(-1)).not.toMatch(/task sz-queued is running/);
     expect(await run('attach', 'sz-runnin')).toBe(1);
-    expect(err.at(-1)).toMatch(/task sz-runnin is running/);
+    expect(err.at(-1)).toMatch(/task sz-runnin is running, started .* ago\)/);
   });
 
   it('builds the attach command from the launch spec of a settled task', async () => {

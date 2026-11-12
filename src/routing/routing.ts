@@ -1,4 +1,4 @@
-// @sigil implements design/routing-hooks.sigil RoutingHooks
+// @sigil implements design/claude-routing-hooks.sigil ClaudeRoutingHooks
 //
 // The routing logic the hook processes share: the alias table, the generic-spawn
 // test, the routing text and the deny decision. It reaches the core only through
@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { AGENT_FILE, getRouting, routableTiers, type RoutableTier } from '../config/agent-config.js';
+import { TIER_WORDS } from '../config/tier-words.js';
 import { liveReadinessMarkers } from '../mcp/parent-session.js';
 
 /** The delegate tool as Claude Code names it for the plugin. */
@@ -19,18 +20,6 @@ const TASKS_TOOL = 'mcp__plugin_subzero_subzero__tasks';
 const AWAIT_SECONDS = 600;
 /** The description prefix that marks a pass-back (KTD17). */
 export const PASSBACK_WORD = 'passback';
-
-/** A tier word of compound-engineering, the model tier it maps to and how CE phrases it. */
-interface TierWord {
-  tier: 'small' | 'medium' | 'large';
-  phrase: string;
-}
-
-export const TIER_WORDS: readonly TierWord[] = [
-  { tier: 'small', phrase: 'cheapest capable' },
-  { tier: 'medium', phrase: 'mid-tier' },
-  { tier: 'large', phrase: 'session model' },
-];
 
 /** The model tier a spawn's model alias maps to; opus and fable map to none (KTD6). */
 export function aliasTier(model: string | undefined): string | undefined {

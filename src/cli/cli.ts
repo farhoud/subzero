@@ -227,11 +227,7 @@ async function attach(
   if (record.status === 'running') {
     // A stored running status with no start time is a queued task: no child exists yet.
     const facts = statusFacts(record);
-    io.err(
-      facts.state === 'queued'
-        ? `subzero: task ${id} is ${formatStatusLine(facts)}; attach once its child run has ended`
-        : `subzero: task ${id} is running; attach once its child run has ended`,
-    );
+    io.err(`subzero: task ${id} is ${formatStatusLine(facts)}; attach once its child run has ended`);
     return 1;
   }
   const spec = record.task?.launchSpec;
