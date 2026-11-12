@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { symlinkSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { registerPiExtension } from '../../src/pi-parent/extension.js';
 import { DelegationService } from '../../src/service/delegation-service.js';
 import { fakePi } from './fake-pi-api.js';
@@ -55,6 +57,20 @@ describe('pi session UI', () => {
     const ownFile = '/packages/subzero/pi-extension.js';
     fake.registeredTools.push({ name: 'subagent', sourceInfo: { path: ownFile } });
     registerPiExtension(fake.api, () => new DelegationService({ env: { SUBZERO_PROJECT_DIR: root }, kernel: kernelWithPort(manualPort().port), warn: () => {} }), () => {}, ownFile);
+    await fake.emit('session_start');
+    expect(fake.notifications).toEqual([]);
+  });
+
+  it('recognizes the same extension through a symlinked path', async () => {
+    const root = makeProject(TIERED_YAML);
+    const dir = tempDir();
+    const real = path.join(dir, 'extension.js');
+    const alias = path.join(dir, 'alias.js');
+    writeFileSync(real, '');
+    symlinkSync(real, alias);
+    const fake = fakePi(root);
+    fake.registeredTools.push({ name: 'subagent', sourceInfo: { path: alias } });
+    registerPiExtension(fake.api, () => new DelegationService({ env: { SUBZERO_PROJECT_DIR: root }, kernel: kernelWithPort(manualPort().port), warn: () => {} }), () => {}, real);
     await fake.emit('session_start');
     expect(fake.notifications).toEqual([]);
   });

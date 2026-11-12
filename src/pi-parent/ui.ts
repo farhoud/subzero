@@ -1,5 +1,6 @@
 // @sigil implements design/pi-extension.sigil PiExtension (session widget, clash warning)
 import path from 'node:path';
+import { realpathSync } from 'node:fs';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import type { DelegationService } from '../service/delegation-service.js';
 import { listingStatus } from '../service/status-text.js';
@@ -9,7 +10,10 @@ export function clashWarning(pi: ExtensionAPI, ownFile: string): string | undefi
   const tools = pi.getAllTools();
   const commands = pi.getCommands();
   const owner = tools.find((tool) => tool.name === 'subagent');
-  const foreignOwner = owner !== undefined && path.resolve(owner.sourceInfo.path) !== path.resolve(ownFile);
+  const canonical = (file: string) => {
+    try { return realpathSync(file); } catch { return path.resolve(file); }
+  };
+  const foreignOwner = owner !== undefined && canonical(owner.sourceInfo.path) !== canonical(ownFile);
   const conflict = [...tools, ...commands].some((item) => item.sourceInfo.path.toLowerCase().includes('pi-subagents'));
   if (!foreignOwner && !conflict) return undefined;
   const ownerName = owner === undefined ? 'unknown' : foreignOwner ? owner.sourceInfo.path : 'subzero';
