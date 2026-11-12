@@ -1,6 +1,7 @@
 @design/task-core.sigil from TaskCore import {
   task, task id, brief, child run, result, domain event, child port,
-  child run state, enqueue time, start time, child driver, transcript,
+  child run state, enqueue time, start time, child driver, transcript, attach command,
+  launch spec,
 }
 @design/agent-config.sigil from AgentConfig import {
   agent definition, project root, load error, tool list,
@@ -429,6 +430,10 @@ component DelegationService {
     so
     that
     it can describe each routable tier without being given a child driver.
+
+    Give a front end the attach command of a settled task from its task record
+    and the child driver registered for its child host. Refuse the attach
+    command while the task is running or when its task record has no launch spec.
 
     Keep a delegation Pending while its model endpoint has reached its
     parallel limit, and release it first come first served.

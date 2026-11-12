@@ -6,6 +6,7 @@
 // registry and the per-endpoint parallel limit. It names no host or child driver.
 import {
   FALLBACK_AGENT,
+  DEFAULT_TIER,
   GENERAL_AGENT,
   loadAgentFile,
   resolveAgent,
@@ -89,6 +90,8 @@ export type CollectReply =
 /** A task as a listing shows it: its record, and its queue place while it is Pending in this process. */
 export interface TaskListing extends TaskView {
   queuePlace?: number;
+  model?: string;
+  tier?: string;
 }
 
 export interface DelegationServiceOptions extends RootSources {
@@ -182,6 +185,7 @@ export class DelegationService {
   private connected: Connected | null = null;
   private starting: Promise<Connected> | null = null;
   private readonly registry = new Map<string, Task>();
+  private readonly taskTiers = new Map<string, string>();
   private readonly sessions = new Map<string, Set<string>>();
   private readonly limiter = new EndpointLimiter();
   private readonly warn: (message: string) => void;
@@ -238,7 +242,7 @@ export class DelegationService {
     const { projectRoot, core } = await this.connect();
     if (delegation.briefText.trim() === '') throw new EmptyBriefError();
     // The host of the definition comes from its tier; the registry's hosts are the only ones that run.
-    const { agent, notice } = this.chooseAgent(projectRoot, delegation);
+    const { agent, notice, tier } = this.chooseAgent(projectRoot, delegation);
     const port = this.options.kernel.childPort(agent.host);
 
     const task = core.start({
@@ -248,6 +252,7 @@ export class DelegationService {
       ...(delegation.parentSessionId !== undefined ? { parentSessionId: delegation.parentSessionId } : {}),
     });
     this.registry.set(task.taskId, task);
+    this.taskTiers.set(task.taskId, tier);
     if (delegation.parentSessionId !== undefined) {
       const session = this.sessions.get(delegation.parentSessionId) ?? new Set<string>();
       this.sessions.set(delegation.parentSessionId, session);
@@ -280,18 +285,19 @@ export class DelegationService {
    * for none or for `general`, or `fallback` for a name the agents map does not hold
    * (with a notice that says so). `general` never falls back.
    */
-  private chooseAgent(projectRoot: string, delegation: Delegation): { agent: AgentDefinition; notice?: string } {
+  private chooseAgent(projectRoot: string, delegation: Delegation): { agent: AgentDefinition; tier: string; notice?: string } {
     const catalog = loadAgentFile(projectRoot);
     const supportedHosts = this.options.kernel.supportedHosts();
     const tier = delegation.tier?.trim().replace(/^tier:/, '').trim();
     const options = { supportedHosts, ...(tier !== undefined && tier !== '' ? { tier } : {}) };
     const named = delegation.agent;
     if (named === undefined || named === GENERAL_AGENT || catalog.entries.has(named)) {
-      return { agent: resolveAgent(catalog, named, options) };
+      return { agent: resolveAgent(catalog, named, options), tier: options.tier ?? catalog.entries.get(named ?? GENERAL_AGENT)?.tier ?? DEFAULT_TIER };
     }
     if (!catalog.entries.has(FALLBACK_AGENT)) throw new UnknownAgentError(named, [...catalog.entries.keys()]);
     return {
       agent: resolveAgent(catalog, FALLBACK_AGENT, options),
+      tier: options.tier ?? catalog.entries.get(FALLBACK_AGENT)?.tier ?? DEFAULT_TIER,
       notice: `the agent "${named}" is not configured, so the ${FALLBACK_AGENT} agent ran instead; configured agents: ${[...catalog.entries.keys()].join(', ')}`,
     };
   }
@@ -368,7 +374,29 @@ export class DelegationService {
 
   async listLiveSession(parentSessionId: string): Promise<TaskListing[]> {
     const ids = this.sessions.get(parentSessionId) ?? new Set<string>();
-    return (await this.list(parentSessionId)).filter((task) => ids.has(task.taskId));
+    return (await this.list(parentSessionId)).filter((task) => ids.has(task.taskId) && task.status === 'running').map((task) => ({
+      ...task,
+      model: this.registry.get(task.taskId)?.agent.model,
+      tier: this.taskTiers.get(task.taskId),
+    }));
+  }
+
+  async attachCommand(taskId: string): Promise<{ kind: 'command'; command: string[] } | { kind: 'error'; message: string }> {
+    const { store } = await this.connect();
+    store.sweep();
+    const record = store.readTask(taskId);
+    if (!record) return { kind: 'error', message: `no such task ${taskId}` };
+    if (record.status === 'running') return { kind: 'error', message: `task ${taskId} is still running; wait until it ends before attaching` };
+    const spec = record.task?.launchSpec;
+    if (!spec) return { kind: 'error', message: `no launch spec was recorded for task ${taskId}` };
+    const host = record.task?.agent.host ?? '(not recorded)';
+    try {
+      const attach = this.options.kernel.attachCommand(host);
+      if (!attach) return { kind: 'error', message: `the child driver of host ${host} offers no attach command` };
+      return { kind: 'command', command: attach(spec) };
+    } catch (err) {
+      return { kind: 'error', message: (err as Error).message };
+    }
   }
 
   async notice(taskId: string, status: Result['status'], parentSessionId: string, collectTool: string): Promise<string> {

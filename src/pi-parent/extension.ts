@@ -1,5 +1,6 @@
 // @sigil implements design/pi-extension.sigil PiExtension
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
+import { fileURLToPath } from 'node:url';
 import { Type } from 'typebox';
 import { configuredTierNames } from '../config/agent-config.js';
 import { TIER_WORDS } from '../config/tier-words.js';
@@ -7,6 +8,7 @@ import type { DelegationService } from '../service/delegation-service.js';
 import { describeTaskReply, listingStatus, withNotice } from '../service/status-text.js';
 import { mapPiRequest } from './request.js';
 import { sendCompletion, sendStopped } from './notices.js';
+import { clashWarning, SessionWidget } from './ui.js';
 
 const names = { collect: 'subzero_await', cancel: 'subzero_cancel' };
 const result = (text: string, isError = false) => ({ content: [{ type: 'text' as const, text }], details: {}, ...(isError ? { isError: true } : {}) });
@@ -14,12 +16,14 @@ const describe = (reply: Parameters<typeof describeTaskReply>[0]) =>
   withNotice(describeTaskReply(reply, undefined, names), 'notice' in reply ? reply.notice : undefined);
 
 /** The entry point supplies a session core; the adapter never receives a driver. */
-export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: ExtensionContext) => DelegationService, killRemaining: () => void = () => {}): void {
+export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: ExtensionContext) => DelegationService, killRemaining: () => void = () => {}, ownFile = fileURLToPath(import.meta.url)): void {
   let service: DelegationService | undefined;
   let sessionId = '';
   let projectRoot = '';
   let session = { closed: true };
   let stopping: Promise<void> | undefined;
+  let widget: SessionWidget | undefined;
+  let warning: string | undefined;
   let description = 'Delegate an isolated task. Await background tasks before using their results.';
   const getService = () => {
     if (!service) throw new Error('subzero session has not started');
@@ -46,6 +50,7 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
     sessionId = ctx.sessionManager.getSessionId();
     projectRoot = ctx.cwd;
     session = { closed: false };
+    widget = new SessionWidget(service, sessionId, ctx);
     description = 'Delegate an isolated task. Await background tasks before using their results.';
     await service.start();
     try {
@@ -57,11 +62,17 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
       ].join('\n');
     } catch { /* The request returns the load error. */ }
     pi.setActiveTools(pi.getActiveTools());
+    warning = clashWarning(pi, ownFile);
+    if (warning) {
+      if (ctx.hasUI) ctx.ui.notify(warning, 'warning');
+      else process.stderr.write(`subzero: ${warning}\n`);
+    }
   });
   pi.on('session_shutdown', async (_event, ctx) => {
     const svc = service;
     if (!svc) return;
     session.closed = true;
+    widget?.close();
     const count = (await svc.listLiveSession(sessionId)).length;
     void svc.cancelSession(sessionId);
     if (!(await svc.shutdown())) killRemaining();
@@ -93,6 +104,7 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
         const forced = ctx.mode === 'print' || ctx.mode === 'json';
         const wait = forced || args.async === false;
         const activeSession = session;
+        const activeWidget = widget;
         const abort = () => void stopSession(svc, ctx);
         if (wait && signal) {
           if (signal.aborted) throw new Error('task was stopped; no action is needed');
@@ -100,7 +112,9 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
         }
         const response = svc.delegate(mapped.delegation, {
           wait,
-          ...(!wait ? { onState: (state) => {
+          onState: (state) => {
+            void activeWidget?.refresh();
+            if (wait) return;
             if (state !== 'Settled' && state !== 'Failed' && state !== 'Cancelled') return;
             queueMicrotask(() => void (async () => {
               const dispatched = await response;
@@ -110,7 +124,7 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
               const notice = await svc.notice(id, collected.result.status, mapped.delegation.parentSessionId!, 'subzero_await');
               if (!activeSession.closed) sendCompletion(pi, notice);
             })().catch(() => {}));
-          } } : {}),
+          },
         });
         const reply = await response.finally(() => signal?.removeEventListener('abort', abort));
         let text = describe(reply);
@@ -165,15 +179,38 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
   pi.registerCommand('subzero', {
     description: 'List or cancel subzero tasks for this session.',
     async handler(args, ctx) {
-      if (args.trim() === 'cancel') {
+      const [action, id, ...extra] = args.trim().split(/\s+/);
+      if (extra.length) { ctx.ui.notify('Usage: /subzero [attach <id> | cancel [id]]'); return; }
+      if (action === 'attach') {
+        if (!id) { ctx.ui.notify('Usage: /subzero attach <id>'); return; }
+        const attach = await getService().attachCommand(id);
+        const quote = (arg: string) => /^[A-Za-z0-9_./:=+-]+$/.test(arg) ? arg : `'${arg.replaceAll("'", "'\\''")}'`;
+        ctx.ui.notify(attach.kind === 'command' ? attach.command.map(quote).join(' ') : attach.message);
+        return;
+      }
+      if (action === 'cancel' && id) {
+        const svc = getService();
+        const live = (await svc.listLiveSession(sessionId)).some((task) => task.taskId === id);
+        if (!live) { ctx.ui.notify(`task ${id} not found among this session's running tasks`); return; }
+        const reply = await svc.cancel(id);
+        if (reply.kind === 'result' && reply.result.status === 'cancelled') {
+          sendStopped(pi, await svc.notice(id, 'cancelled', sessionId, 'subzero_await'));
+          ctx.ui.notify('1 subzero task cancelled');
+        } else ctx.ui.notify(describe(reply));
+        return;
+      }
+      if (action === 'cancel') {
         const svc = getService();
         const count = (await svc.listLiveSession(sessionId)).length;
         await stopSession(svc, ctx);
+        if (ctx.hasUI && count === 0) ctx.ui.notify('0 subzero tasks cancelled');
         if (!ctx.hasUI) process.stderr.write(`subzero: ${count} tasks cancelled\n`);
         return;
       }
+      if (action) { ctx.ui.notify('Usage: /subzero [attach <id> | cancel [id]]'); return; }
       const tasks = await getService().list(sessionId);
-      ctx.ui.notify(tasks.length ? tasks.map((task) => `${task.taskId} · ${task.agent} · ${listingStatus(task)}`).join('\n') : 'no tasks');
+      const listing = tasks.length ? tasks.map((task) => `${task.taskId} · ${task.agent} · ${listingStatus(task)}`).join('\n') : 'no tasks';
+      ctx.ui.notify(warning ? `${listing}\n${warning}` : listing);
     },
   });
 }
