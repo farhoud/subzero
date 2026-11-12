@@ -4,7 +4,8 @@
 // names them mcp__plugin_subzero_subzero__<tool>.
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { LoadError, MissingAgentFileError, routableTiers, TierError, UnknownAgentError, UnresolvedRootError } from '../config/agent-config.js';
+import { configuredTierNames, LoadError, MissingAgentFileError, routableTiers, TierError, UnknownAgentError, UnresolvedRootError } from '../config/agent-config.js';
+import { mapRequest } from '../config/tier-words.js';
 import { isTaskId } from '../core/ids.js';
 import { UnsupportedHostError } from '../kernel/kernel.js';
 import { EmptyBriefError, type DelegationService } from '../service/delegation-service.js';
@@ -62,8 +63,8 @@ const TOOLS = [
   },
   {
     name: 'cancel',
-    description: 'Cancel a task; it ends with the status cancelled.',
-    inputSchema: { type: 'object', properties: { task: { type: 'string' } }, required: ['task'] },
+    description: 'Cancel one task, or all tasks of this session when no task is given.',
+    inputSchema: { type: 'object', properties: { task: { type: 'string' } } },
   },
 ];
 
@@ -108,6 +109,25 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
     { name: 'subzero', version: options.version ?? '0.0.0-dev' },
     { capabilities: { tools: {} }, instructions: SERVER_INSTRUCTIONS },
   );
+  let lastSession: string | undefined;
+  let watcher: NodeJS.Timeout | undefined;
+  const syncSession = async (): Promise<string | undefined> => {
+    await service.start();
+    const current = options.parentSessionId();
+    const previous = lastSession;
+    if (current !== undefined) lastSession = current;
+    if (current !== undefined && previous !== undefined && current !== previous) await service.cancelSession(previous);
+    return current;
+  };
+  const stopWatchingIfIdle = () => {
+    if (watcher && !service.hasLiveSessionTasks()) { clearInterval(watcher); watcher = undefined; }
+  };
+  const watchSessions = () => {
+    if (watcher || !service.hasLiveSessionTasks()) return;
+    watcher = setInterval(() => void syncSession().catch(() => undefined).finally(stopWatchingIfIdle), 5000);
+    watcher.unref();
+  };
+  server.onclose = () => { if (watcher) clearInterval(watcher); watcher = undefined; };
 
   // The delegate description names the tiers the agent file holds now, read at each listing.
   async function delegateDescription(): Promise<string> {
@@ -125,6 +145,7 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
   }
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
+    try { await syncSession(); } catch { /* A later call reports the root error. */ }
     const description = await delegateDescription();
     return { tools: TOOLS.map((tool) => (tool.name === 'delegate' ? { ...tool, description } : tool)) };
   });
@@ -132,6 +153,7 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
   server.setRequestHandler(CallToolRequestSchema, async (request, extra): Promise<CallToolResult> => {
     const args = (request.params.arguments ?? {}) as Record<string, unknown>;
     try {
+      const currentSession = await syncSession();
       switch (request.params.name) {
         case 'delegate': {
           const agent = stringArg(args, 'agent');
@@ -143,7 +165,10 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
           const wait = args.wait !== false;
           // Connect first, so the parent session id is read for the resolved root.
           await service.start();
-          const parentSessionId = options.parentSessionId();
+          const parentSessionId = currentSession;
+          const tiers = configuredTierNames(service.projectRoot!);
+          const mapped = mapRequest(agent, tier, tiers);
+          if (mapped.tier.kind === 'unmatched') throw new TierError(mapped.tier.value, tiers);
 
           const progressToken = request.params._meta?.progressToken;
           const reporter =
@@ -160,8 +185,8 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
           try {
             const reply = await service.delegate(
               {
-                ...(agent !== undefined ? { agent } : {}),
-                ...(tier !== undefined ? { tier } : {}),
+                ...(mapped.agent !== undefined ? { agent: mapped.agent } : {}),
+                ...(mapped.tier.kind === 'tier' ? { tier: mapped.tier.name } : {}),
                 briefText: brief,
                 ...(files !== undefined ? { files } : {}),
                 ...(expectedOutput !== undefined ? { expectedOutput } : {}),
@@ -171,7 +196,15 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
               },
               {
                 wait,
-                ...(reporter ? { onEvent: (e) => reporter.onEvent(e), onState: (s) => reporter.onState(s) } : {}),
+                ...(reporter ? { onEvent: (e) => reporter.onEvent(e) } : {}),
+                onState: (state) => {
+                  reporter?.onState(state);
+                  if (parentSessionId !== undefined && lastSession !== undefined && parentSessionId !== lastSession) {
+                    void service.cancelSession(parentSessionId);
+                  }
+                  watchSessions();
+                  if (state === 'Settled' || state === 'Failed' || state === 'Cancelled') setImmediate(stopWatchingIfIdle);
+                },
                 // notifications/cancelled for a waited call cancels its task.
                 ...(wait ? { signal: extra.signal } : {}),
               },
@@ -192,7 +225,7 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
             return text(describeReply(await service.collect(task), view));
           }
           await service.start();
-          const parentSessionId = options.parentSessionId();
+          const parentSessionId = currentSession;
           const views = await service.list(parentSessionId);
           return text(formatListing(views, parentSessionId !== undefined));
         }
@@ -208,7 +241,13 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
 
         case 'cancel': {
           const task = stringArg(args, 'task');
-          if (task === undefined) return text('cancel needs a task id', true);
+          if (task === undefined) {
+            await service.start();
+            const cancelled = await service.cancelSession(currentSession);
+            return cancelled.kind === 'unknown_session'
+              ? text('session is unknown; no tasks were cancelled', true)
+              : text(`${cancelled.count} tasks cancelled${cancelled.count ? `: ${cancelled.taskIds.join(', ')}` : ''}`);
+          }
           return text(describeReply(await service.cancel(task)));
         }
 

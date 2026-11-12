@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { formatListing } from '../../src/mcp/format.js';
 import { createSubzeroServer } from '../../src/mcp/server.js';
 import { DelegationService } from '../../src/service/delegation-service.js';
@@ -33,11 +33,11 @@ async function connect(scenario: Record<string, unknown> = {}, env: NodeJS.Proce
 }
 
 /** A server whose children the test settles by hand, on an endpoint that runs one at a time. */
-async function connectManual(yaml?: string) {
+async function connectManual(yaml?: string, sessionId?: string | (() => string | undefined)) {
   const root = makeProject(yaml);
   const { port, started } = manualPort();
   const service = new DelegationService({ env: { SUBZERO_PROJECT_DIR: root }, roots: () => [], warn: () => {}, kernel: kernelWithPort(port) });
-  const server = createSubzeroServer({ service, parentSessionId: () => undefined, progress: { minIntervalMs: 10, heartbeatMs: 200 } });
+  const server = createSubzeroServer({ service, parentSessionId: () => typeof sessionId === 'function' ? sessionId() : sessionId, progress: { minIntervalMs: 10, heartbeatMs: 200 } });
   const client = new Client({ name: 'test', version: '1' });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -49,6 +49,45 @@ async function connectManual(yaml?: string) {
 }
 
 describe('ClaudeMcpServer', () => {
+  it('cancels the previous session when a new session is observed on a request', async () => {
+    let current = 'session-a';
+    const { call, service } = await connectManual(TIERED_YAML, () => current);
+    await call('delegate', { agent: 'free', brief: 'one', wait: false });
+    current = 'session-b';
+    await call('tasks', {});
+    expect((await service.list('session-a'))[0]?.status).toBe('cancelled');
+  });
+  it('detects a session change on the live-task timer without a request', async () => {
+    let current = 'session-a';
+    const { call, service } = await connectManual(TIERED_YAML, () => current);
+    vi.useFakeTimers();
+    try {
+      await call('delegate', { agent: 'free', brief: 'one', wait: false });
+      current = 'session-b';
+      await vi.advanceTimersByTimeAsync(5001);
+      expect((await service.list('session-a'))[0]?.status).toBe('cancelled');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it('cancels every task of the current session and leaves other sessions running', async () => {
+    const { call, textOf, service, started } = await connectManual(TIERED_YAML, 'session-a');
+    await call('delegate', { agent: 'free', brief: 'one', wait: false });
+    await call('delegate', { agent: 'free', brief: 'two', wait: false });
+    const other = await service.delegate({ agent: 'free', briefText: 'other', parentSessionId: 'session-b' }, { wait: false });
+    if (other.kind === 'result') throw new Error('expected live task');
+    expect(textOf(await call('cancel', {}))).toMatch(/2.*cancel/i);
+    expect((await service.list('session-a')).map((task) => task.status)).toEqual(['cancelled', 'cancelled']);
+    expect((await service.collect(other.taskId)).kind).toBe('running');
+    started[2]!.settle();
+  });
+
+  it('does not cancel every task when the session is unknown', async () => {
+    const { call, textOf, started } = await connectManual(TIERED_YAML);
+    await call('delegate', { agent: 'free', brief: 'one', wait: false });
+    expect(textOf(await call('cancel', {}))).toMatch(/session.*unknown/i);
+    started[0]!.settle();
+  });
   it('passes back a delegation when the agent file is missing', async () => {
     const { root, call, textOf, service } = await connect();
     rmSync(path.join(root, '.agents', 'subzero.yaml'));
@@ -223,6 +262,31 @@ describe('ClaudeMcpServer', () => {
 });
 
 describe('ClaudeMcpServer tiers, general, fallback and await bounds', () => {
+  it('maps the delegate alias and tier phrase to the general agent on small', async () => {
+    const { call, textOf, fake } = await connect({}, null, undefined, TIERED_YAML);
+    const reply: any = await call('delegate', { agent: 'delegate', tier: 'cheapest capable', brief: 'go' });
+    expect(reply.isError).not.toBe(true);
+    expect(textOf(reply)).toMatch(/general:small.*status: completed/);
+    const argv = fake.log()[0].argv;
+    expect(argv[argv.indexOf('--model') + 1]).toBe('local/qwen-small');
+  });
+
+  it('passes an unmatched tier value back to Claude without creating a task', async () => {
+    const { call, textOf, service } = await connect({}, null, undefined, TIERED_YAML);
+    const reply: any = await call('delegate', { tier: 'other/model', brief: 'go' });
+    expect(reply.isError).toBe(true);
+    expect(textOf(reply)).toMatch(/other\/model.*Agent tool.*passback/s);
+    expect(await service.list()).toEqual([]);
+  });
+
+  it('passes back a tier phrase whose tier is not configured', async () => {
+    const yaml = TIERED_YAML.replace('    large: { host: pi, model: cloud/large, thinking: high }\n', '').replace('    tiers:\n      large: { model: cloud/reviewer-large }\n', '');
+    const { call, textOf, service } = await connect({}, null, undefined, yaml);
+    const reply: any = await call('delegate', { tier: 'session model', brief: 'go' });
+    expect(reply.isError).toBe(true);
+    expect(textOf(reply)).toMatch(/unknown tier "large".*Agent tool.*passback/s);
+    expect(await service.list()).toEqual([]);
+  });
   const taskIdOf = (text: string) => /sz-[a-z2-7]{6}/.exec(text)![0];
 
   it('delegate takes an optional agent and a tier, and requires only the brief', async () => {

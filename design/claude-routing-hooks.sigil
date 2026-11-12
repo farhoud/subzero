@@ -1,19 +1,20 @@
 @design/agent-config.sigil from AgentConfig import {
   agent file, project root, load error, general agent, model tier,
-  routable tier, routing settings, hook switch, generic agent list, default tier,
+  routable tier, medium tier,
+  tier word,
 }
-@design/mcp-server.sigil from McpServer import {
+@design/claude-mcp-server.sigil from ClaudeMcpServer import {
   readiness marker, plugin data folder, SessionStart hook, delegate tool,
-  await tool, tasks tool, deferred line,
+  await tool, tasks tool, deferred line, task mode, MCP task,
 }
-@design/kernel.sigil from Kernel import { parent adapter }
+@design/kernel.sigil from Kernel import { parent adapter, parent host, child host }
 @design/delegation-service.sigil from DelegationService import {
   brief text, queued task,
 }
 @design/task-store.sigil from TaskStore import { parent session id }
 @design/task-core.sigil from TaskCore import { task id, start time, child driver }
 
-component RoutingHooks {
+component ClaudeRoutingHooks {
   goal {
     Let a developer running compound-engineering skills in Claude Code send
     each generic subagent of a configured model tier to subzero instead of
@@ -23,15 +24,19 @@ component RoutingHooks {
   }
 
   state {
-    A *tier word* is how a *compound-engineering skill* names the model of a
-    generic subagent. The tier word cheapest capable maps to the model tier
-    small, mid-tier maps to medium, and session model maps to large.
+    The *routing settings* are the part of the agent file that holds a
+    *hook switch*, which is on unless it is set to false, and an optional
+    *generic agent list* of agent type names. ClaudeRoutingHooks reads them
+    from the agent file
+    that AgentConfig loads for it, and no other component reads them.
+
+    A *compound-engineering skill* names the model of a generic subagent with a
+    tier word, which AgentConfig maps to a model tier.
 
     An *Agent spawn* is one call of Claude Code's *Agent tool*, named Agent or
     Task, with its prompt, a short description, an optional *subagent type*, an
-    optional *model alias*, and an optional isolation or fork request.
-
-    The *hook input* is the JSON that Claude Code gives a hook process. It
+    optional *model alias*, and an optional isolation or fork request. The
+    *hook input* is the JSON that Claude Code gives a hook process. It
     carries the fields of an Agent spawn and the parent session id.
 
     The *alias table* maps an Agent spawn with no model alias to the
@@ -43,18 +48,21 @@ component RoutingHooks {
     the routing settings give one, and a list that the routing settings give
     replaces it.
 
-    A *pass-back* is an Agent spawn whose short description begins with the word
-    passback. Claude uses it to send a subagent back to its own Agent tool when the
-    delegate tool is refused or returns a tool error and made no task. A delegate
+    A *pass-back* is an Agent spawn whose short description begins with the
+    word
+    passback. Claude uses it to send a subagent back to its own Agent tool when
+    the
+    delegate tool is refused or returns a tool error and made no task. A
+    delegate
     call that returned a task id stays with subzero, even when its result is
     failed, and is never passed back.
 
-    RoutingHooks is a parent adapter for Claude Code that reaches the core only
+    ClaudeRoutingHooks is a parent adapter of the Claude Code parent host that
+    reaches the core only
     through AgentConfig. Its hook processes run no Kernel, register no
     parent adapter and import no child driver.
 
     The *routing text* is what the SessionStart hook adds to Claude's context.
-
     The *deny memory* is one folder for each parent session id under the
     plugin data folder. It holds one entry for each prompt that the hook
     denied, named by a hash of that prompt and keeping the model tier it was
@@ -70,22 +78,29 @@ component RoutingHooks {
     project root is given or the agent file is missing, add nothing and end
     the flow. When the agent file exists and fails with a load error, add a
     one-line warning that routing is off as the routing text, which ends the
-    flow. When it loads with no routable tier that a tier word maps to, add nothing
-    and end the flow. Otherwise build the routing text from the routable tiers that
+    flow. When it loads with no routable tier that a tier word maps to, add
+    nothing
+    and end the flow. Otherwise build the routing text from each routable tier
+    that
     a tier word maps to and add it to
     Claude's context, which ends the flow.
 
     On an Agent spawn, allow it and end the flow when the hook switch of the
     routing settings is off or the agent file fails to load. Then allow it and
     end the flow when no readiness marker names a live process whose recorded
-    parent process is one of the hook's own ancestor processes. Then allow it and
-    end the flow when it asks for a fork or sets isolation. Then allow it and end
-    the flow when it is a pass-back and the deny memory of the parent session id
-    holds the hash of its prompt, whatever model tier that entry keeps. Then, when
+    parent process is one of the hook's own ancestor processes. Then allow it
+    and
+    end the flow when it asks for a fork or sets isolation. Then allow it and
+    end
+    the flow when it is a pass-back and the deny memory of the
+    parent session id
+    holds the hash of its prompt, whatever model tier that entry keeps. Then,
+    when
     the
     deny memory of the parent session id holds the hash of its prompt and the
     model tier that entry keeps is still a routable tier, deny it with the
-    deny reason toward that model tier, which ends the flow. Then allow it and end
+    deny reason toward that model tier, which ends the flow. Then allow it and
+    end
     the
     flow when it is not a generic spawn, or when
     the alias table maps it to no routable tier. Otherwise record its prompt in
@@ -94,19 +109,35 @@ component RoutingHooks {
   }
 
   constraints {
-    The routing text must name each routable tier that a tier word maps to against
+    The routing text must name each routable tier that a tier word maps to
+    against
     its tier word, say
     that this work goes to the delegate tool, by its full name
     mcp__plugin_subzero_subzero__delegate, with that model tier instead of the
     Agent tool, and list every other tier word as
     staying on Claude. It must say that a subagent spawn that asks for a fork
     or for worktree isolation stays on the Agent tool and is never sent to the
-    delegate tool. It must tell Claude to dispatch every routed subagent
-    with wait false in one message and then call the await tool with every task id
-    and up to 600 seconds until every task is done, and it must say that a
+    delegate tool. While the task mode in the readiness marker is off, it must
+    tell
+    Claude to dispatch every routed subagent
+    with wait false in one message and then call the await tool with every
+    task id
+    and up to 600 seconds until every task is done. While the task mode is on,
+    it
+    must tell Claude to dispatch every routed subagent in one message without
+    asking to wait, so that each becomes an MCP task, and to wait for every
+    completion notice before it uses the results together. While the
+    readiness marker is absent or holds no task mode, it must tell Claude to
+    dispatch every
+    routed subagent in one message without asking to wait, and to collect a
+    task id
+    that comes back with the await tool, so that the wording works in both
+    modes. It must say that a
     queued task has not launched yet and that a task's launch time is its
-    start time, and that when the delegate tool is refused or returns a tool error
-    and made no task it must pass the subagent back through a pass-back, and that
+    start time, and that when the delegate tool is refused or returns a
+    tool error
+    and made no task it must pass the subagent back through a pass-back, and
+    that
     once a task id came back the work stays with subzero. It must say, in one
     sentence, that a task whose result an await reply does not show, which the
     await tool gives as a deferred line, must be read with the tasks tool
@@ -116,22 +147,31 @@ component RoutingHooks {
     Code puts on added context, because it is added again at every session
     start, resume, /clear and compaction.
 
-    RoutingHooks must add the routing text only through the output of the
+    ClaudeRoutingHooks must add the routing text only through the output of the
     SessionStart hook and must never write it to CLAUDE.md or any other file
     of the project.
 
     The deny reason must name the delegate tool by its full name
     mcp__plugin_subzero_subzero__delegate, the model tier as tier, the prompt
-    unchanged as the brief text and wait false,
-    and it must say that this is a routing rule and not an error, and that Claude
-    must not call Agent again for this subagent or change its model, except that
-    when the delegate tool is refused or returns a tool error and made no task it
-    must call Agent again with the prompt unchanged and a short description that
+    unchanged as the brief text, and wait false while the task mode is off, the
+    same neutral wording as the routing text while the readiness marker holds
+    no task mode,
+    and it must say that this is a routing rule and not an error, and that
+    Claude
+    must not call Agent again for this subagent or change its model, except
+    that
+    when the delegate tool is refused or returns a tool error and made no task
+    it
+    must call Agent again with the prompt unchanged and a short description
+    that
     begins with passback.
 
-    RoutingHooks must deny only a generic spawn that the alias table maps to a
+    ClaudeRoutingHooks must deny only a generic spawn that the alias table maps
+    to
+    a
     routable tier, or an Agent spawn whose prompt the deny memory holds with a
-    model tier that is still a routable tier and that is not a pass-back, and must
+    model tier that is still a routable tier and that is not a pass-back, and
+    must
     allow every other
     Agent spawn, including a spawn of a named
     specialist agent whose prompt the deny memory does not hold.
@@ -139,29 +179,39 @@ component RoutingHooks {
     An Agent spawn that asks for a fork or sets isolation must always be
     allowed, before the deny memory is read, because a subzero child starts in
     the shared checkout and sees only its brief text. A fork is a spawn whose
-    agent type is fork, and any isolation value that is not empty counts, such as
+    agent type is fork, and any isolation value that is not empty counts, such
+    as
     worktree or remote, including a value this design does not know, because
-    subzero can honor no isolated spawn. These are the shapes of a real hook
-    input that Claude Code 2.1.318 gave on 2026-11-10: an Agent tool input
+    subzero can honor no isolated spawn. These are the shapes of a real
+    hook input
+    that Claude Code 2.1.318 gave on 2026-11-10: an Agent tool input
     with a description, a prompt, an optional model, run in background, and
     isolation worktree or agent type fork when asked.
 
-    A pass-back whose prompt the deny memory of its parent session id holds must
-    always be allowed, before the deny memory can deny it, so that a subagent whose
+    A pass-back whose prompt the deny memory of its parent session id holds
+    must
+    always be allowed, before the deny memory can deny it, so that a subagent
+    whose
     delegation is refused or returns a tool error can still run on Claude's own
-    Agent tool and Claude is never stranded. A pass-back whose prompt the deny
-    memory does not hold gets no exemption and goes through the rest of the flow
-    like any other Agent spawn, because the hook cannot tell whether the delegate
-    tool failed and a pass-back of a prompt that was never denied would otherwise
-    be a way around the routing. This is the one deliberate exception to the rule
+    Agent tool and Claude is never stranded. A pass-back whose prompt the
+    deny memory does not hold gets no exemption and goes through the rest of
+    the
+    flow
+    like any other Agent spawn, because the hook cannot tell whether the
+    delegate tool failed and a pass-back of a prompt that was never denied
+    would
+    otherwise
+    be a way around the routing. This is the one deliberate exception to the
+    rule
     that a prompt that was denied is denied again.
 
     The alias table must not map opus or fable, because the hook cannot tell
-    them from the session model, but an Agent spawn with either alias whose
+    them from the parent model, but an Agent spawn with either alias whose
     prompt the deny memory holds must still be denied, while the model tier
     that entry keeps is a routable tier.
 
-    RoutingHooks must deny only while a readiness marker names a live process
+    ClaudeRoutingHooks must deny only while a readiness marker names a live
+    process
     whose recorded parent process is one of the hook's own ancestor processes,
     so that two Claude sessions on one project never remove each other's
     readiness and a session whose own server is down never relies on the
@@ -180,42 +230,59 @@ component RoutingHooks {
     another, and each new entry deletes deny memory folders older than seven
     days, except the folder of the parent session id that is writing. An entry
     keeps the model tier it was first denied toward and is never replaced: when
-    its tier stops being a routable tier and the same prompt is later denied toward
-    another model tier by the alias table, the entry still holds the first tier,
-    and a retry whose model has no alias is then allowed until the entry's tier is
+    its tier stops being a routable tier and the same prompt is later denied
+    toward
+    another model tier by the alias table, the entry still holds the first
+    tier,
+    and a retry whose model has no alias is then allowed until the entry's tier
+    is
     routable again. That bounded hole is accepted, because replacing an entry
     would break the rule that no write may replace another entry.
 
     When the hook switch is off, every Agent spawn must be allowed while the
     routing text is still added.
 
-    RoutingHooks reads the agent file under the project root that
-    *CLAUDE_PROJECT_DIR* names, as the one named exception to the rule that only
+    ClaudeRoutingHooks reads the agent file under the project root that
+    *CLAUDE_PROJECT_DIR* names, as the one named exception to the rule that
+    only
     DelegationService resolves a project root, because a hook process starts no
     DelegationService.
 
-    RoutingHooks keeps its logic in one importable module with two thin entry
-    scripts. The SessionStart hook stays the one process that also records the
-    parent session id, and the *PreToolUse hook* matches Agent|Task so that older
-    Claude Code builds are covered.
+    ClaudeRoutingHooks keeps its logic in one importable module with two thin
+    entry
+    scripts. The SessionStart hook runs the recording of the parent session id
+    that ClaudeMcpServer owns, and the *PreToolUse hook* matches Agent|Task so
+    that older Claude Code builds are covered.
 
-    RoutingHooks must route by the tier word through the routing text and the
+    ClaudeRoutingHooks must route by the tier word through the routing text and
+    the
     alias table and not skill by skill, and must not need any change to a
     compound-engineering skill.
 
-    RoutingHooks depends on AgentConfig for the agent file, the routable tier
-    names and the routing settings, and on McpServer for the readiness marker,
+    ClaudeRoutingHooks depends on AgentConfig for the agent file and the
+    routable tier names, reads the routing settings from that agent file
+    itself, and on ClaudeMcpServer for the
+    readiness marker,
     the plugin data folder, the SessionStart hook and the delegate tool.
   }
 
   cases {
-    In every case here the agent file also holds the default tier and a general
-    agent, and a case that names the model tiers configured names only the tiers
+    In every case here the agent file also holds the medium tier and a
+    general agent, and a case that names the model tiers configured names only
+    the
+    tiers
     that carry a tier word.
+
+    At a SessionStart with no readiness marker, the routing text tells Claude
+    to
+    dispatch without asking to wait and to collect any task id with the
+    await tool,
+    and the next SessionStart after the server wrote its task mode uses the
+    wording of that task mode.
 
     With only the model tier medium configured, the routing text sends mid-tier
     work to delegate with the model tier medium and says that cheapest capable
-    and session model work stays on Claude, and that a spawn which asks for a
+    and parent model work stays on Claude, and that a spawn which asks for a
     fork or for worktree isolation stays on the Agent tool.
 
     With the model tier large configured, a generic spawn with no model alias
@@ -246,15 +313,22 @@ component RoutingHooks {
     worktree and the alias sonnet is allowed, and so is a fork.
 
     With the model tier medium configured, after a generic spawn with sonnet is
-    denied and the delegate tool is refused, the same prompt as a pass-back, whose
-    short description begins with passback, is allowed. A pass-back with a prompt
+    denied and the delegate tool is refused, the same prompt as a pass-back,
+    whose
+    short description begins with passback, is allowed. A pass-back with a
+    prompt
     that was never denied, from a generic spawn that the alias table maps to a
-    routable tier, is denied like any other spawn and recorded in the deny memory.
+    routable tier, is denied like any other spawn and recorded in the
+    deny memory.
 
-    A file whose only model tier is the default tier adds no routing text, and
-    every generic spawn is allowed, because the default tier has no tier word.
+    A file whose only model tier is the medium tier routes mid-tier work to it
+    with
+    the delegate tool and leaves every other generic spawn on Claude, because
+    only
+    the tier word mid-tier maps to a configured tier.
 
-    Six hook processes run at once and deny six different prompts, and every one
+    Six hook processes run at once and deny six different prompts, and every
+    one
     of the six is denied again on retry, because each has its own entry in the
     deny memory.
 
@@ -270,7 +344,9 @@ component RoutingHooks {
     when there is no agent file or no routable tier that a tier word maps to.
 
     Answer each Agent spawn of the Agent tool through the PreToolUse hook with
-    allow, or with deny and the deny reason that Claude sees.
+    allow, or with deny and the deny reason that Claude sees, as its logic
+    gives,
+    and allow the pass-back that its logic names.
   }
 
   decisions {
@@ -279,26 +355,36 @@ component RoutingHooks {
     reviewer clock at the Agent call and bring the queue problem back, so the
     routing text comes with a redirecting hook. The hook fails open because a
     down server would otherwise block every reviewer, and it remembers what it
-    denied so that a changed model alias cannot route around it. The hook checks no
-    host, because its process has no registered child driver and so cannot tell a
-    supported host from another: an agent file with a host that is not supported
-    shows up as a tool error of the delegate tool, and the pass-back answers it.
+    denied so that a changed model alias cannot route around it. The hook
+    checks no
+    child host, because its process has no registered child driver and so
+    cannot
+    tell a
+    supported child host from another: an agent file with a child host that is
+    not
+    supported
+    shows up as a tool error of the delegate tool, and the pass-back answers
+    it.
     Worktree and
-    fork spawns stay on Claude until delegate has a worktree mode. The routing text
+    fork spawns stay on Claude until delegate has a worktree mode. The
+    routing text
     is added at session start and not written to CLAUDE.md so that no
     committed file changes, nothing goes stale when the model tier set
     changes, and nothing is left behind when the plugin is removed.
 
-    The general agent runs with write and shell tools inside pi, outside
-    Claude Code's permission prompts, which the user accepted so that
-    compound-engineering reviewers keep full fidelity.
+    The general agent runs with write and shell tools inside its child host,
+    outside the permission prompts of the Claude Code parent host, which the
+    user
+    accepted so that compound-engineering reviewers keep full fidelity. The
+    routing text reads the task mode from the readiness marker because a hook
+    process cannot see what Claude Code advertised to the server.
 
     Two limits are known and left open. The hook input carries the permission
     mode of the session, which the hook does not read, so a generic spawn made
     in plan mode is still sent to a child with write and shell tools. The
     SessionStart hook runs before the server connects, so when the server then
     fails to start the routing text still says that routing is on; nothing is
-    denied, because no readiness marker exists, and Claude keeps its own Agent
-    tool.
+    denied, because no readiness marker exists, and Claude keeps its own
+    Agent tool.
   }
 }

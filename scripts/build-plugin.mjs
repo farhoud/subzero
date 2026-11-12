@@ -21,6 +21,7 @@ const ALLOWLIST = [
   '.mcp.json',
   'hooks/hooks.json',
   'skills/init',
+  'skills/cancel',
   'skills/tasks',
   'bin/subzero',
   ...BUNDLES.map((name) => `dist/${name}.js`),

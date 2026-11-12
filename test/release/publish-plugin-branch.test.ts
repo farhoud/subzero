@@ -20,6 +20,7 @@ const BRANCH_FILES = [
   'hooks/hooks.json',
   'package.json',
   'skills/init/SKILL.md',
+  'skills/cancel/SKILL.md',
   'skills/tasks/SKILL.md',
 ].sort();
 
@@ -39,7 +40,7 @@ function sourceTree(options: { dist?: boolean; version?: string } = {}): string 
     mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     cpSync(path.join(REPO, file), path.join(root, file));
   }
-  for (const skill of ['init', 'tasks']) cpSync(path.join(REPO, 'skills', skill), path.join(root, 'skills', skill), { recursive: true });
+  for (const skill of ['init', 'tasks', 'cancel']) cpSync(path.join(REPO, 'skills', skill), path.join(root, 'skills', skill), { recursive: true });
   mkdirSync(path.join(root, 'src'));
   writeFileSync(path.join(root, 'src', 'decoy.ts'), 'decoy\n');
   if (options.dist !== false) {

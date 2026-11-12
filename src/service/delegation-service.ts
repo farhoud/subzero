@@ -199,6 +199,10 @@ export class DelegationService {
     return this.options.kernel.supportedHosts();
   }
 
+  hasLiveSessionTasks(): boolean {
+    return [...this.sessions.values()].some((tasks) => tasks.size > 0);
+  }
+
   /** The task store, for front ends that read task records. Requires start(). */
   get store(): TaskStore {
     if (this.connected === null) throw new Error('the delegation service has not started');

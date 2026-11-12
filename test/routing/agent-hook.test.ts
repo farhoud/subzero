@@ -231,6 +231,7 @@ describe('decideAgentSpawn', () => {
       const { ctx } = setup(config(['medium']));
       expect(decideAgentSpawn(spawnOf('p', { model: 'sonnet' }), ctx()).decision).toBe('deny');
       expect(decideAgentSpawn(spawnOf('p', { model: 'sonnet', description: 'passback review' }), ctx()).decision).toBe('allow');
+      expect(decideAgentSpawn(spawnOf('p', { model: 'sonnet', description: 'passbackdoor' }), ctx()).decision).toBe('deny');
       expect(decideAgentSpawn(spawnOf('p', { model: 'sonnet', description: 'review passback' }), ctx()).decision).toBe('deny');
       expect(decideAgentSpawn(spawnOf('p', { model: 'sonnet', description: 'review' }), ctx()).decision).toBe('deny');
     });

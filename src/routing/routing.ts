@@ -58,7 +58,7 @@ export function buildRoutingText(tiers: RoutableTier[]): string {
   const lines = [
     'subzero routing is on for this project.',
     `Some subagent work runs on other models through the ${DELEGATE_TOOL} tool instead of the Agent tool.`,
-    'Compound-engineering names a model by tier word; send these tier words as follows:',
+    'Compound-engineering names a model by tier word; delegate accepts these phrases or tier names:',
   ];
   for (const { tier, phrase } of TIER_WORDS) {
     const t = routed.get(tier);
@@ -207,7 +207,7 @@ export function buildDenyReason(tier: string, prompt: string): string {
 }
 
 function isPassback(description: string | undefined): boolean {
-  return description !== undefined && description.trimStart().startsWith(PASSBACK_WORD);
+  return description !== undefined && /^passback\b/.test(description.trimStart());
 }
 
 function allowedByMarker(ctx: HookContext): boolean {
