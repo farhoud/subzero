@@ -22,6 +22,15 @@ const indexLines = (root: string) => {
 };
 
 describe('DelegationService', () => {
+  it('records cancellation when a child does not stop before shutdown expires', async () => {
+    const root = makeProject();
+    const svc = service(root, { start: () => ({ outcome: new Promise(() => {}), cancel: () => {} }) });
+    const reply = await svc.delegate({ agent: 'helper', briefText: 'stuck', parentSessionId: 'A' }, { wait: false });
+    if (reply.kind === 'result') throw new Error('expected live task');
+    expect(await svc.shutdown(10)).toBe(false);
+    expect(svc.store.readTask(reply.taskId)?.status).toBe('cancelled');
+    expect(await svc.collect(reply.taskId)).toMatchObject({ kind: 'result', result: { status: 'cancelled' } });
+  });
   it('cancels only live and queued tasks of the selected session', async () => {
     const { port, started } = manualPort();
     const svc = service(makeProject(), port);

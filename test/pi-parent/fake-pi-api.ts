@@ -6,9 +6,10 @@ export function fakePi(root: string, mode: 'tui' | 'rpc' | 'json' | 'print' = 't
   const handlers = new Map<string, (event: any, ctx: ExtensionContext) => unknown>();
   const commands = new Map<string, unknown>();
   const messages: unknown[] = [];
+  const notifications: string[] = [];
   const context = {
     cwd: root, mode, hasUI: mode === 'tui', sessionManager: { getSessionId: () => 'pi-session' },
-    ui: { notify: () => {}, setWidget: () => {} },
+    ui: { notify: (message: string) => notifications.push(message), setWidget: () => {} },
   } as unknown as ExtensionContext;
   const api = {
     registerTool: (tool: ToolDefinition<any, any>) => tools.set(tool.name, tool),
@@ -17,5 +18,5 @@ export function fakePi(root: string, mode: 'tui' | 'rpc' | 'json' | 'print' = 't
     sendMessage: (...args: unknown[]) => messages.push(args),
     getAllTools: () => [], getCommands: () => [], getActiveTools: () => [...tools.keys()], setActiveTools: () => {},
   } as unknown as ExtensionAPI;
-  return { api, context, tools, commands, messages, emit: async (event: string, data: unknown = {}) => handlers.get(event)?.(data, context) };
+  return { api, context, tools, commands, messages, notifications, emit: async (event: string, data: unknown = {}) => handlers.get(event)?.(data, context) };
 }

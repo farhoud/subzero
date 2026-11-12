@@ -403,6 +403,7 @@ export class DelegationService {
       new Promise<false>((resolve) => (timer = setTimeout(() => resolve(false), deadlineMs))),
     ]);
     clearTimeout(timer);
+    if (!ended) for (const task of live) task.forceCancel();
     return ended;
   }
 }
