@@ -14,5 +14,4 @@ try {
     if (notice !== undefined) process.stderr.write(`${notice}\n`, () => process.exit(2));
   }
 } catch {
-  // Hooks fail open when the input, project or marker store is unavailable.
 }

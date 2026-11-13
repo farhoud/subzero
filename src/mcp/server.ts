@@ -7,6 +7,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, McpError, ErrorCode, typ
 import { configuredTierNames, LoadError, MissingAgentFileError, routableTiers, TierError, UnknownAgentError, UnresolvedRootError } from '../config/agent-config.js';
 import { mapRequest } from '../config/tier-words.js';
 import { isTaskId } from '../core/ids.js';
+import type { ChildRunState } from '../core/types.js';
 import { UnsupportedHostError } from '../kernel/kernel.js';
 import { EmptyBriefError, type DelegationService } from '../service/delegation-service.js';
 import { describeReply, formatAwaitWithShown, formatListing, REPLY_BUDGET_CHARS } from './format.js';
@@ -210,23 +211,31 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
                 options.progress,
               )
             : null;
+          const delegation = {
+            ...(mapped.agent !== undefined ? { agent: mapped.agent } : {}),
+            ...(mapped.tier.kind === 'tier' ? { tier: mapped.tier.name } : {}),
+            briefText: brief,
+            ...(files !== undefined ? { files } : {}),
+            ...(expectedOutput !== undefined ? { expectedOutput } : {}),
+            replyBudgetChars: REPLY_BUDGET_CHARS,
+            ...(parentSessionId !== undefined ? { parentSessionId } : {}),
+          };
+          const onState = (state: ChildRunState) => {
+            reporter?.onState(state);
+            if (parentSessionId !== undefined && lastSession !== undefined && parentSessionId !== lastSession) {
+              void service.cancelSession(parentSessionId);
+            }
+            watchSessions();
+            if (state === 'Settled' || state === 'Failed' || state === 'Cancelled') setImmediate(stopWatchingIfIdle);
+          };
           if (request.params.task) {
             try {
               if (!extra.taskStore) throw new Error('task storage unavailable');
-              const reply = await service.delegate({
-                ...(mapped.agent !== undefined ? { agent: mapped.agent } : {}),
-                ...(mapped.tier.kind === 'tier' ? { tier: mapped.tier.name } : {}),
-                briefText: brief,
-                ...(files !== undefined ? { files } : {}),
-                ...(expectedOutput !== undefined ? { expectedOutput } : {}),
-                replyBudgetChars: REPLY_BUDGET_CHARS,
-                ...(parentSessionId !== undefined ? { parentSessionId } : {}),
-              }, { wait: false, ...(reporter ? { onEvent: (event) => reporter.onEvent(event) } : {}), onState: (state) => {
-                reporter?.onState(state);
-                if (parentSessionId !== undefined && lastSession !== undefined && parentSessionId !== lastSession) void service.cancelSession(parentSessionId);
-                watchSessions();
-                if (state === 'Settled' || state === 'Failed' || state === 'Cancelled') setImmediate(stopWatchingIfIdle);
-              } });
+              const reply = await service.delegate(delegation, {
+                wait: false,
+                ...(reporter ? { onEvent: (event) => reporter.onEvent(event) } : {}),
+                onState,
+              });
               if (reply.kind === 'result') throw new Error('expected a live task');
               let task;
               try { task = await extra.taskStore.createTask({ ttl: null, pollInterval: 100 }); }
@@ -267,16 +276,7 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
 
           try {
             const reply = await service.delegate(
-              {
-                ...(mapped.agent !== undefined ? { agent: mapped.agent } : {}),
-                ...(mapped.tier.kind === 'tier' ? { tier: mapped.tier.name } : {}),
-                briefText: brief,
-                ...(files !== undefined ? { files } : {}),
-                ...(expectedOutput !== undefined ? { expectedOutput } : {}),
-                // The child's result comes back whole; this keeps it within Claude Code's inline limit.
-                replyBudgetChars: REPLY_BUDGET_CHARS,
-                ...(parentSessionId !== undefined ? { parentSessionId } : {}),
-              },
+              delegation,
               {
                 wait,
                 onTask: (taskId) => {
@@ -284,14 +284,7 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
                   if (wait && (cancelOwnWhenCreated || (extra.signal.aborted && Date.now() - startedAt < 120_000))) void service.cancel(taskId);
                 },
                 ...(reporter ? { onEvent: (e) => reporter.onEvent(e) } : {}),
-                onState: (state) => {
-                  reporter?.onState(state);
-                  if (parentSessionId !== undefined && lastSession !== undefined && parentSessionId !== lastSession) {
-                    void service.cancelSession(parentSessionId);
-                  }
-                  watchSessions();
-                  if (state === 'Settled' || state === 'Failed' || state === 'Cancelled') setImmediate(stopWatchingIfIdle);
-                },
+                onState,
               },
             );
             if (!wait && reply.kind !== 'result' && parentSessionId !== undefined && options.wakeDataDir !== undefined && service.projectRoot !== undefined) {
@@ -301,7 +294,7 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
                 void service.waitForCompletion(reply.taskId).then(async (done) => {
                   if (done.kind !== 'result' || done.result.status === 'cancelled') markers.clear(parentSessionId, reply.taskId);
                   else markers.finish(parentSessionId, reply.taskId, `${describeReply(done)}\n\n${await service.notice(reply.taskId, done.result.status, parentSessionId, 'await')}`);
-                }).catch(() => { try { markers.clear(parentSessionId, reply.taskId); } catch { /* best effort */ } });
+                }).catch(() => { try { markers.clear(parentSessionId, reply.taskId); } catch {} });
               } catch { /* A marker failure must not lose a delegation. */ }
             }
             return text(describeReply(reply));
@@ -320,7 +313,7 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
             if (view === undefined) return text(`task: ${task} · no such task`);
             const reply = await service.collect(task);
             if (reply.kind === 'result' && view.parentSessionId !== undefined && options.wakeDataDir && service.projectRoot) {
-              try { new WakeMarkers(options.wakeDataDir, service.projectRoot).clear(view.parentSessionId, task); } catch { /* best effort */ }
+              try { new WakeMarkers(options.wakeDataDir, service.projectRoot).clear(view.parentSessionId, task); } catch {}
             }
             return text(describeReply(reply, view));
           }
@@ -348,7 +341,7 @@ export function createSubzeroServer(options: SubzeroServerOptions): Server {
             const owners = await service.list().catch(() => []);
             for (const id of formatted.shown) {
               const owner = owners.find((task) => task.taskId === id)?.parentSessionId;
-              if (owner !== undefined) try { markers.clear(owner, id); } catch { /* best effort */ }
+              if (owner !== undefined) try { markers.clear(owner, id); } catch {}
             }
           }
           // Whole results while they fit, the first always; a later one that does not fit is deferred, never cut.

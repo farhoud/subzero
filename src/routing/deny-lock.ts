@@ -29,10 +29,10 @@ export function withDenyLock<T>(dataDir: string, sessionKey: string, action: () 
   } finally {
     // The helper and lock utility share a process group, so both release their FDs.
     if (child.pid !== undefined) {
-      try { process.kill(-child.pid, 'SIGTERM'); } catch { /* already exited */ }
+      try { process.kill(-child.pid, 'SIGTERM'); } catch {}
     }
     child.stdin?.destroy();
     child.unref();
-    try { rmSync(ready, { force: true }); } catch { /* A cleanup error must not change the routing decision. */ }
+    try { rmSync(ready, { force: true }); } catch {}
   }
 }

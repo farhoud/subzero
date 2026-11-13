@@ -24,7 +24,6 @@ const pi = setting(env.SUBZERO_PI);
 const piDriver = new PiDriver(pi !== undefined ? { piCommand: [pi] } : {});
 const kernel = new Kernel();
 kernel.registerChildDriver(PI_HOST, piDriver);
-// ClaudeMcpServer is the parent adapter of the Claude Code parent host.
 kernel.registerParentAdapter('claude-code');
 const service = new DelegationService({
   env,
@@ -74,7 +73,7 @@ server = createSubzeroServer({
       try { writeReadinessMarker(data, markedRoot, process.pid, process.ppid, enabled); }
       catch {
         // A stale task-mode marker is unsafe; remove it so routing fails open.
-        try { removeReadinessMarker(data, markedRoot, process.pid); } catch { /* best effort */ }
+        try { removeReadinessMarker(data, markedRoot, process.pid); } catch {}
         markedRoot = undefined;
       }
     }

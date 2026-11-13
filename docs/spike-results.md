@@ -143,6 +143,12 @@ terminal, one with a print flag, or one it cannot inspect as non-interactive.
 This is deliberately conservative: an IDE or SDK client without a controlling
 terminal also waits, even if a human is interacting with it.
 
+On 2026-11-13, a clean Debian Bookworm arm64 container with Node 22, `flock`
+and `procps` built the committed tree and passed 68 routing, deny-lock and
+wake-marker tests. The minimal Node image did not include `ps` until `procps`
+was installed. A second pass including the simplified server and parent-mode
+check passed 74 MCP, routing, deny-lock and wake-marker tests.
+
 A separate interactive probe registered an `asyncRewake` Stop hook. After the
 first assistant turn ended, the hook exited with code 2 and feedback; Claude
 started another turn without a user prompt, and the second Stop hook ran. This

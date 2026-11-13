@@ -56,6 +56,8 @@ text and lets every subagent run on Claude.
 - The system `lockf` utility on macOS or `flock` on Linux. The Agent routing
   hook uses it to coordinate concurrent sessions; if it is unavailable, the
   hook allows the Agent call through to Claude.
+- `ps`, used to identify the parent session. Minimal Linux images may need the
+  `procps` package.
 
 If Node or pi is missing, `/subzero:init` and the plugin's hooks print one line
 saying what to install.

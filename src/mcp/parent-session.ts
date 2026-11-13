@@ -13,8 +13,8 @@ import path from 'node:path';
 /** A parent without a terminal, or one whose command requests print mode, cannot retain background results. */
 export function parentIsNonInteractive(pid = process.ppid): boolean {
   try {
-    const tty = execFileSync('ps', ['-p', String(pid), '-o', 'tty='], { encoding: 'utf8', timeout: 2000 }).trim();
-    const command = execFileSync('ps', ['-ww', '-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 2000 }).trim();
+    const row = execFileSync('ps', ['-ww', '-p', String(pid), '-o', 'tty=', '-o', 'command='], { encoding: 'utf8', timeout: 2000 }).trim();
+    const [, tty, command] = /^(\S+)\s+([\s\S]+)$/.exec(row) ?? [];
     if (!tty || !command || /^\?+$/.test(tty)) return true;
     return /(?:^|\s)(?:--print(?:=\S*)?|-p\S*)(?:\s|$)/.test(command);
   } catch {

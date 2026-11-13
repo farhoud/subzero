@@ -81,7 +81,7 @@ export class WakeMarkers {
           const pid = Number(readFileSync(path.join(taskFolder, 'owner'), 'utf8'));
           if (!Number.isInteger(pid) || pid <= 0) throw new Error('invalid owner');
           if (alive(pid)) pending = true;
-        } catch { /* An absent or invalid entry is ignored. */ }
+        } catch {}
       }
     }
     return { pending, notice };

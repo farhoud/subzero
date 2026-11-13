@@ -23,7 +23,6 @@ try {
   if (!project || typeof input.session_id !== 'string' || input.session_id.trim() === '') process.exit(0);
   writeParentSessionId(dataDir(process.env), realpathSync(project), input.session_id, ancestorPids());
 } catch {
-  // An unreadable input or failed session recording adds no routing text.
   process.exit(0);
 }
 let output = '';
