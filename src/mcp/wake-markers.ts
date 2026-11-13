@@ -40,7 +40,8 @@ export class WakeMarkers {
       writeFileSync(temp, notice, { mode: 0o600 });
       renameSync(temp, path.join(folder, 'done'));
     } catch {
-      // A missing folder means collection already consumed it.
+      // If the notice cannot be published, do not leave a live owner pending forever.
+      try { this.clear(session, task); } catch { /* The marker may already be gone. */ }
     } finally { rmSync(temp, { force: true }); }
   }
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -7,6 +7,15 @@ import { describe, expect, it, vi } from 'vitest';
 import { WakeMarkers, waitForWake } from '../../src/mcp/wake-markers.js';
 
 describe('background wake markers', () => {
+  it('clears a pending marker if publishing the completion notice fails', () => {
+    const data = mkdtempSync(path.join(tmpdir(), 'subzero-wake-'));
+    const markers = new WakeMarkers(data, '/project');
+    const key = (value: string) => createHash('sha256').update(value).digest('hex');
+    markers.start('session-a', 'sz-one');
+    mkdirSync(path.join(data, 'wake', key('/project'), key('session-a'), key('sz-one'), 'done'));
+    markers.finish('session-a', 'sz-one', 'result');
+    expect(markers.read('session-a')).toEqual({ pending: false, notice: undefined });
+  });
   it('isolates sessions, claims each completed notice once, and clears collected work', () => {
     const markers = new WakeMarkers(mkdtempSync(path.join(tmpdir(), 'subzero-wake-')), '/project');
     markers.start('session-a', 'sz-one');

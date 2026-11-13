@@ -111,6 +111,7 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
         }
         const response = svc.delegate(mapped.delegation, {
           wait,
+          ...(wait && signal ? { signal } : {}),
           onState: (state) => {
             void activeWidget?.refresh();
             if (wait) return;
@@ -136,11 +137,19 @@ export function registerPiExtension(pi: ExtensionAPI, createService: (ctx: Exten
   pi.registerTool({
     name: 'subzero_await', label: 'Await subzero tasks', description: 'Collect task results, waiting up to 600 seconds.',
     parameters: Type.Object({ tasks: Type.Array(Type.String()), timeout_s: Type.Optional(Type.Number()) }),
-    async execute(_id, args) {
+    async execute(_id, args, signal, _update, ctx) {
       return respond(async () => {
         if (args.tasks.length === 0) throw new Error('await needs at least one task id');
         const seconds = args.timeout_s !== undefined && args.timeout_s >= 0 ? Math.min(args.timeout_s, 600) : 30;
-        return (await Promise.all(args.tasks.map((id) => getService().waitFor(id, seconds * 1000)))).map(describe).join('\n\n');
+        const svc = getService();
+        const abort = () => void stopSession(svc, ctx);
+        if (signal?.aborted) abort();
+        else signal?.addEventListener('abort', abort, { once: true });
+        try {
+          return (await Promise.all(args.tasks.map((id) => svc.waitFor(id, seconds * 1000)))).map(describe).join('\n\n');
+        } finally {
+          signal?.removeEventListener('abort', abort);
+        }
       });
     },
   });

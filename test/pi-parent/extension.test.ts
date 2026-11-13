@@ -125,6 +125,18 @@ describe('pi extension requests', () => {
     expect((await pending).content[0]).toMatchObject({ text: expect.stringMatching(/status: cancelled/) });
   });
 
+  it('cancels a foreground call aborted before its task is registered', async () => {
+    const root = makeProject(TIERED_YAML);
+    const { port } = manualPort();
+    const fake = fakePi(root);
+    registerPiExtension(fake.api, () => new DelegationService({ env: { SUBZERO_PROJECT_DIR: root }, kernel: kernelWithPort(port), warn: () => {} }));
+    await fake.emit('session_start');
+    const controller = new AbortController();
+    const pending = fake.tools.get('subagent')!.execute('call', { task: 'x', async: false }, controller.signal, undefined, fake.context as any);
+    controller.abort();
+    expect((await pending).content[0]).toMatchObject({ text: expect.stringMatching(/status: cancelled/) });
+  });
+
   it('cancels a background task by id', async () => {
     const root = makeProject(TIERED_YAML);
     const { port } = manualPort();

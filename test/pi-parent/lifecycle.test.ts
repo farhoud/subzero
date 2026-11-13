@@ -62,6 +62,25 @@ describe('pi session lifecycle', () => {
     expect(fake.messages[0]).toMatchObject([{ content: expect.stringMatching(/3.*stopped/) }, { triggerTurn: false, deliverAs: 'nextTurn' }]);
   });
 
+  it('cancels all session children when an await is aborted', async () => {
+    const root = makeProject(TIERED_YAML);
+    const { port } = manualPort();
+    const fake = fakePi(root);
+    const service = new DelegationService({ env: { SUBZERO_PROJECT_DIR: root }, kernel: kernelWithPort(port), warn: () => {} });
+    registerPiExtension(fake.api, () => service);
+    await fake.emit('session_start');
+    const execute = fake.tools.get('subagent')!.execute;
+    const replies = await Promise.all(['one', 'two'].map((task) => execute(task, { task }, undefined, undefined, fake.context as any)));
+    const content = replies[0]!.content[0];
+    if (!content || content.type !== 'text') throw new Error('expected text');
+    const id = /sz-[a-z2-7]{6}/.exec(content.text)![0];
+    const controller = new AbortController();
+    const pending = fake.tools.get('subzero_await')!.execute('await', { tasks: [id], timeout_s: 600 }, controller.signal, undefined, fake.context as any);
+    controller.abort();
+    expect((await pending).content[0]).toMatchObject({ text: expect.stringMatching(/status: cancelled/) });
+    await vi.waitFor(async () => expect((await service.list('pi-session')).map((task) => task.status)).toEqual(['cancelled', 'cancelled']));
+  });
+
   it('notifies on child failure without exposing its result', async () => {
     const root = makeProject(TIERED_YAML);
     const { port, started } = manualPort();
