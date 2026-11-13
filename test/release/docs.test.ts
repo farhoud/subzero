@@ -98,6 +98,8 @@ describe('README.md', () => {
     expect(prerequisites).toMatch(/model/i);
     expect(prerequisites).toMatch(/macOS/);
     expect(prerequisites).toMatch(/Linux/);
+    expect(prerequisites).toContain('`lockf`');
+    expect(prerequisites).toContain('`flock`');
     expect(prerequisites).toMatch(/Windows[^.]*not supported/i);
     expect(prerequisites).toMatch(/current Claude Code/);
   });

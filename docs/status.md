@@ -84,11 +84,9 @@ The distribution work added:
 
 ### 1. To finish the current work
 
-- The deny-memory cleanup has a concurrency gap: when an old session resumes
-  while another session sweeps expired folders, the sweep can remove a newly
-  recorded denial. A later retry with another model alias may then be allowed.
-  The cleanup predates the parent-extension work and still needs a crash-safe
-  synchronization fix.
+- Deny-memory cleanup uses per-session operating-system locks so it cannot
+  remove a denial while another hook uses that session. A missing `lockf`
+  (macOS) or `flock` (Linux) makes the hook allow the Agent call through.
 
 **Release (distribution plan U7 and the transfer)**
 - Stage 1 walkthrough: install from `dist-release/local-marketplace` on a clean

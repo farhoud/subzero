@@ -11,6 +11,7 @@ import path from 'node:path';
 import { AGENT_FILE, getRouting, routableTiers, type RoutableTier } from '../config/agent-config.js';
 import { TIER_WORDS } from '../config/tier-words.js';
 import { liveReadinessMarkers } from '../mcp/parent-session.js';
+import { withDenyLock } from './deny-lock.js';
 
 /** The delegate tool as Claude Code names it for the plugin. */
 export const DELEGATE_TOOL = 'mcp__plugin_subzero_subzero__delegate';
@@ -173,10 +174,9 @@ function rememberedTier(dataDir: string, sessionId: string, hash: string): strin
  * so hook processes of one concurrent batch cannot lose each other's entries. Session
  * folders not written for seven days are deleted, except the one being written.
  */
-function remember(dataDir: string, sessionId: string, hash: string, tier: string, now: number): void {
+function remember(dataDir: string, sessionId: string, hash: string, tier: string): void {
   const folder = denyFolder(dataDir, sessionId);
   mkdirSync(folder, { recursive: true, mode: 0o700 });
-  sweepDenyMemory(dataDir, now, path.basename(folder));
   try {
     writeFileSync(path.join(folder, hash), JSON.stringify({ tier }) + '\n', { flag: 'wx', mode: 0o600 });
   } catch (err) {
@@ -186,20 +186,26 @@ function remember(dataDir: string, sessionId: string, hash: string, tier: string
 
 function sweepDenyMemory(dataDir: string, now: number, keep: string): void {
   const root = denyRoot(dataDir);
-  try {
-    for (const name of readdirSync(root)) {
+  let names: string[];
+  try { names = readdirSync(root); }
+  catch (err) { if ((err as NodeJS.ErrnoException).code === 'ENOENT') return; throw err; }
+  for (const name of names) {
       // A resumed session's folder can be old by mtime; the write below must not lose it.
       if (name === keep) continue;
       try {
         const folder = path.join(root, name);
-        if (now - statSync(folder).mtimeMs > DENY_MEMORY_TTL_MS) rmSync(folder, { recursive: true, force: true });
-      } catch {
-        // A folder another process just removed is gone either way.
+        if (now - statSync(folder).mtimeMs <= DENY_MEMORY_TTL_MS) continue;
+        const checked = withDenyLock(dataDir, name, () => {
+          try {
+            if (now - statSync(folder).mtimeMs > DENY_MEMORY_TTL_MS) rmSync(folder, { recursive: true, force: true });
+          } catch (err) { if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err; }
+          return true;
+        });
+        if (!checked) throw new Error('could not lock deny memory for cleanup');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       }
     }
-  } catch {
-    // Nothing to sweep.
-  }
 }
 
 /** The deny reason Claude sees (KTD8, KTD17). */
@@ -251,16 +257,22 @@ export function decideAgentSpawn(spawn: SpawnInput, ctx: HookContext): HookDecis
     if (spawn.subagent_type === 'fork') return ALLOW;
     if (typeof spawn.isolation === 'string' && spawn.isolation !== '') return ALLOW;
 
-    const hash = promptHash(prompt);
-    const kept = rememberedTier(ctx.dataDir, ctx.sessionId, hash);
-    if (kept !== undefined && isPassback(spawn.description)) return ALLOW;
-    if (kept !== undefined && routable.has(kept)) return { decision: 'deny', tier: kept, reason: buildDenyReason(kept, prompt, marker.taskMode) };
+    const sessionKey = path.basename(denyFolder(ctx.dataDir, ctx.sessionId));
+    // Cleanup runs before recording a denial: an error must not leave memory
+    // for a spawn that was allowed through.
+    sweepDenyMemory(ctx.dataDir, (ctx.now ?? Date.now)(), sessionKey);
+    return withDenyLock(ctx.dataDir, sessionKey, (): HookDecision => {
+      const hash = promptHash(prompt);
+      const kept = rememberedTier(ctx.dataDir, ctx.sessionId, hash);
+      if (kept !== undefined && isPassback(spawn.description)) return ALLOW;
+      if (kept !== undefined && routable.has(kept)) return { decision: 'deny', tier: kept, reason: buildDenyReason(kept, prompt, marker.taskMode) };
 
-    if (!isGenericSpawn(spawn, getRouting(ctx.projectRoot).genericAgents)) return ALLOW;
-    const tier = aliasTier(spawn.model);
-    if (tier === undefined || !routable.has(tier)) return ALLOW;
-    remember(ctx.dataDir, ctx.sessionId, hash, tier, (ctx.now ?? Date.now)());
-    return { decision: 'deny', tier, reason: buildDenyReason(tier, prompt, marker.taskMode) };
+      if (!isGenericSpawn(spawn, getRouting(ctx.projectRoot).genericAgents)) return ALLOW;
+      const tier = aliasTier(spawn.model);
+      if (tier === undefined || !routable.has(tier)) return ALLOW;
+      remember(ctx.dataDir, ctx.sessionId, hash, tier);
+      return { decision: 'deny', tier, reason: buildDenyReason(tier, prompt, marker.taskMode) };
+    }) ?? ALLOW;
   } catch {
     return ALLOW;
   }

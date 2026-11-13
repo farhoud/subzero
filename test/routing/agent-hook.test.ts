@@ -231,6 +231,51 @@ describe('decideAgentSpawn', () => {
     expect(decideAgentSpawn(spawnOf('two', { model: 'opus' }), ctx('resumed'))).toMatchObject({ decision: 'deny', tier: 'medium' });
   });
 
+  it('waits for a resumed session and rechecks its age before cleanup', async () => {
+    const { data, ctx } = setup(config(['medium']));
+    expect(decideAgentSpawn(spawnOf('one', { model: 'sonnet' }), ctx('resumed')).decision).toBe('deny');
+    const root = path.join(data, 'sessions', 'deny');
+    const old = readdirSync(root)[0]!;
+    const eightDays = (Date.now() - 8 * 24 * 3600 * 1000) / 1000;
+    utimesSync(path.join(root, old), eightDays, eightDays);
+    const lock = path.join(data, 'sessions', 'deny-locks', `${old}.lock`);
+    const ready = path.join(data, 'holder-ready');
+    const helper = "const fs=require('node:fs');fs.writeFileSync(process.argv[1],'ready');setTimeout(()=>{fs.writeFileSync(process.argv[2],'new');process.exit(0)},350)";
+    const program = process.platform === 'darwin' ? 'lockf' : 'flock';
+    const args = process.platform === 'darwin'
+      ? ['-k', '-t', '2', lock, process.execPath, '-e', helper, ready, path.join(root, old, 'fresh')]
+      : ['-w', '2', lock, process.execPath, '-e', helper, ready, path.join(root, old, 'fresh')];
+    const holder = spawn(program, args, { detached: true, stdio: 'ignore' });
+    try {
+      await until(() => existsSync(ready));
+      expect(decideAgentSpawn(spawnOf('other', { model: 'sonnet' }), ctx('other')).decision).toBe('deny');
+      expect(existsSync(path.join(root, old))).toBe(true);
+      expect(decideAgentSpawn(spawnOf('one', { model: 'opus' }), ctx('resumed')).decision).toBe('deny');
+    } finally { try { process.kill(-holder.pid!, 'SIGTERM'); } catch { /* already exited */ } }
+  });
+
+  it('does not remember an allowed spawn when cleanup cannot acquire a lock', async () => {
+    const { data, ctx } = setup(config(['medium']));
+    expect(decideAgentSpawn(spawnOf('old', { model: 'sonnet' }), ctx('old-session')).decision).toBe('deny');
+    const root = path.join(data, 'sessions', 'deny');
+    const old = readdirSync(root)[0]!;
+    const eightDays = (Date.now() - 8 * 24 * 3600 * 1000) / 1000;
+    utimesSync(path.join(root, old), eightDays, eightDays);
+    const lock = path.join(data, 'sessions', 'deny-locks', `${old}.lock`);
+    const ready = path.join(data, 'holder-ready');
+    const helper = "require('node:fs').writeFileSync(process.argv[1],'ready');setTimeout(()=>process.exit(0),5000)";
+    const program = process.platform === 'darwin' ? 'lockf' : 'flock';
+    const args = process.platform === 'darwin'
+      ? ['-k', '-t', '2', lock, process.execPath, '-e', helper, ready]
+      : ['-w', '2', lock, process.execPath, '-e', helper, ready];
+    const holder = spawn(program, args, { detached: true, stdio: 'ignore' });
+    try {
+      await until(() => existsSync(ready));
+      expect(decideAgentSpawn(spawnOf('new', { model: 'sonnet' }), ctx('new-session')).decision).toBe('allow');
+    } finally { try { process.kill(-holder.pid!, 'SIGKILL'); } catch { /* already exited */ } }
+    expect(decideAgentSpawn(spawnOf('new', { model: 'opus' }), ctx('new-session')).decision).toBe('allow');
+  }, 10_000);
+
   it('records each denial as its own create-only entry, and sweeps session folders older than seven days on a write', () => {
     const { data, ctx } = setup(config(['medium']));
     decideAgentSpawn(spawnOf('one', { model: 'sonnet' }), ctx('old-session'));
@@ -420,6 +465,22 @@ describe('built PreToolUse hook', () => {
     const retry = await Promise.all(prompts.map((p) => runAsync(root, data, input({ prompt: p, model: 'haiku' }))));
     for (const out of retry) expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe('deny');
     expect(readdirSync(path.join(data, 'sessions', 'deny', readdirSync(path.join(data, 'sessions', 'deny'))[0]!))).toHaveLength(6);
+  });
+
+  it('keeps concurrent routing responsive while cleaning expired sessions', async () => {
+    const root = project(config(['medium']));
+    const data = tempDir();
+    writeReadinessMarker(data, root, process.pid, process.pid);
+    const deny = path.join(data, 'sessions', 'deny');
+    mkdirSync(deny, { recursive: true });
+    const old = (Date.now() - 8 * 24 * 3600 * 1000) / 1000;
+    for (let i = 0; i < 3; i++) {
+      const folder = path.join(deny, `old-${i}`);
+      mkdirSync(folder);
+      utimesSync(folder, old, old);
+    }
+    const replies = await Promise.all(Array.from({ length: 6 }, (_, i) => runAsync(root, data, input({ prompt: `new-${i}`, model: 'sonnet' }))));
+    for (const reply of replies) expect(JSON.parse(reply).hookSpecificOutput.permissionDecision).toBe('deny');
   });
 
   it('AE12: allows a passback of a denied prompt through the built hook', () => {

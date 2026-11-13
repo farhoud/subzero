@@ -53,6 +53,9 @@ text and lets every subagent run on Claude.
   `pi --list-models` shows your model. subzero installs nothing and does not edit
   your pi configuration.
 - macOS or Linux. Windows is not supported in this preview.
+- The system `lockf` utility on macOS or `flock` on Linux. The Agent routing
+  hook uses it to coordinate concurrent sessions; if it is unavailable, the
+  hook allows the Agent call through to Claude.
 
 If Node or pi is missing, `/subzero:init` and the plugin's hooks print one line
 saying what to install.
