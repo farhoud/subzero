@@ -60,6 +60,16 @@ describe('routing text', () => {
     const text = buildRoutingText(wordTiers(routableTiers(project(config('medium')))), true);
     expect(text).toMatch(/completed tasks deliver their results/i);
     expect(text).not.toMatch(/wait: false|timeout_s: 600/);
+    expect(text).toMatch(/one message/);
+    expect(text).toMatch(/every completion notice/);
+    expect(text).toMatch(/await reply[^\n]*not show[^\n]*tasks/i);
+  });
+
+  it('uses mode-neutral instructions when no readiness marker is known', () => {
+    const text = buildRoutingText(wordTiers(routableTiers(project(config('medium')))), null);
+    expect(text).toMatch(/if it returns a task id, collect it/i);
+    expect(text).not.toMatch(/wait: false|timeout_s: 600/);
+    expect(text).toMatch(/one message/);
   });
 
   it('AE1: with only medium configured, sends mid-tier to delegate and keeps the other tier words on Claude', () => {

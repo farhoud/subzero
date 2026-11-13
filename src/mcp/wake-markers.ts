@@ -4,6 +4,11 @@ import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync
 import path from 'node:path';
 
 const key = (value: string) => createHash('sha256').update(value).digest('hex');
+function alive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; }
+  catch (err) { return (err as NodeJS.ErrnoException).code === 'EPERM'; }
+}
 
 /** Per-project and per-session markers shared by the server and wake hook. */
 export class WakeMarkers {
@@ -53,21 +58,29 @@ export class WakeMarkers {
     for (const name of names) {
       const taskFolder = path.join(folder, name);
       if (notice !== undefined) { pending = true; continue; }
-      const claimed = path.join(taskFolder, `${randomUUID()}.claim`);
+      const claimed = path.join(taskFolder, `${process.pid}.${randomUUID()}.claim`);
       try {
         renameSync(path.join(taskFolder, 'done'), claimed);
         notice = readFileSync(claimed, 'utf8');
         rmSync(taskFolder, { recursive: true, force: true });
       } catch {
-        // Drop an orphan left by a server killed before it could publish a result.
+        // A competing live hook owns a claim; recover it if that hook died.
         try {
+          const claims = readdirSync(taskFolder).filter((name) => name.endsWith('.claim'));
+          if (claims.length) {
+            for (const claim of claims) {
+              if (!alive(Number(claim.split('.')[0]))) {
+                try { renameSync(path.join(taskFolder, claim), path.join(taskFolder, 'done')); } catch { /* Another hook won. */ }
+              }
+            }
+            pending = true;
+            continue;
+          }
+          // An orphan is not pending. Keep its folder: a competing hook may
+          // still be restoring a claimed result to it.
           const pid = Number(readFileSync(path.join(taskFolder, 'owner'), 'utf8'));
           if (!Number.isInteger(pid) || pid <= 0) throw new Error('invalid owner');
-          try { process.kill(pid, 0); pending = true; }
-          catch (err) {
-            if ((err as NodeJS.ErrnoException).code === 'EPERM') pending = true;
-            else rmSync(taskFolder, { recursive: true, force: true });
-          }
+          if (alive(pid)) pending = true;
         } catch { /* An absent or invalid entry is ignored. */ }
       }
     }

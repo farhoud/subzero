@@ -1,4 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -36,6 +37,20 @@ function setup(yaml: string | undefined, marker = true) {
 const spawnOf = (prompt: string, extra: Partial<SpawnInput> = {}): SpawnInput => ({ prompt, description: 'review things', ...extra });
 
 describe('decideAgentSpawn', () => {
+  it('uses a mode-neutral deny reason for a live marker without a task mode', () => {
+    const { root, data, ctx } = setup(config(['medium']));
+    const key = createHash('sha256').update(root).digest('hex').slice(0, 16);
+    const file = path.join(data, 'ready', key, `${process.pid}.json`);
+    const marker = JSON.parse(readFileSync(file, 'utf8'));
+    delete marker.taskMode;
+    writeFileSync(file, JSON.stringify(marker));
+    const out = decideAgentSpawn(spawnOf('review', { model: 'sonnet' }), ctx());
+    expect(out.decision).toBe('deny');
+    if (out.decision === 'deny') {
+      expect(out.reason).toMatch(/if it returns a task id, collect it/i);
+      expect(out.reason).not.toContain('wait: false');
+    }
+  });
   it('omits the await choreography when the matching server has task mode on', () => {
     const { root, data, ctx } = setup(config(['medium']), false);
     writeReadinessMarker(data, root, process.pid, process.ppid, true);
@@ -352,6 +367,19 @@ describe('built PreToolUse hook', () => {
     const off = project(config(['medium'], 'routing:\n  hook: false\n'));
     writeReadinessMarker(data, off, process.pid, process.pid);
     expect(run(off, data, input({ prompt: 'x', model: 'sonnet' }))).toBe('');
+  });
+
+  it('fails open for malformed Agent fields, including a remembered prompt', () => {
+    const root = project(config(['medium']));
+    const data = tempDir();
+    writeReadinessMarker(data, root, process.pid, process.pid);
+    expect(run(root, data, input({ prompt: 'remembered', model: 'sonnet' }))).not.toBe('');
+    for (const isolation of [true, 1, { kind: 'worktree' }]) {
+      expect(run(root, data, input({ prompt: 'remembered', model: 'sonnet', isolation }))).toBe('');
+    }
+    expect(run(root, data, input({ prompt: 'new', model: 'sonnet', description: 42 }))).toBe('');
+    expect(run(root, data, input({ prompt: 'new', model: { value: 'sonnet' } }))).toBe('');
+    expect(run(root, data, input({ prompt: 'new', model: 'sonnet' }, '   '))).toBe('');
   });
 
   it('exits 0 with no output for malformed stdin, empty stdin, no session id and a missing project', () => {

@@ -92,15 +92,15 @@ agents:
     timeout: 60
 `;
 
-  function runHook(project: string | undefined, yaml: string | undefined, input: Record<string, unknown> = {}) {
+  function runHook(project: string | undefined, yaml: string | undefined, input: Record<string, unknown> = {}, data = tempDir()) {
     execFileSync(process.execPath, ['build.mjs'], { cwd: REPO });
-    const data = tempDir();
     if (project !== undefined && yaml !== undefined) {
       mkdirSync(path.join(project, '.agents'), { recursive: true });
       writeFileSync(path.join(project, '.agents', 'subzero.yaml'), yaml);
     }
     const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_PLUGIN_DATA: data };
     delete env.CLAUDE_PROJECT_DIR;
+    delete env.SUBZERO_DATA;
     if (project !== undefined) env.CLAUDE_PROJECT_DIR = project;
     const stdout = execFileSync(process.execPath, [path.join(REPO, 'dist', 'hook.js')], {
       input: JSON.stringify({ session_id: 's-1', source: 'startup', ...input }),
@@ -116,8 +116,20 @@ agents:
     expect(out.hookSpecificOutput.hookEventName).toBe('SessionStart');
     expect(out.hookSpecificOutput.additionalContext).toContain('mcp__plugin_subzero_subzero__delegate');
     expect(out.hookSpecificOutput.additionalContext).toContain('tier: "medium"');
+    expect(out.hookSpecificOutput.additionalContext).toMatch(/if it returns a task id, collect it/i);
+    expect(out.hookSpecificOutput.additionalContext).not.toContain('wait: false');
     expect(out.hookSpecificOutput.additionalContext.length).toBeLessThan(3000);
     expect(readParentSessionId(data, project, process.pid)).toBe('s-1');
+  });
+
+  it('adds no routing text when it cannot record the session', () => {
+    const data = path.join(tempDir(), 'not-a-directory');
+    writeFileSync(data, 'file');
+    expect(runHook(tempDir(), MEDIUM, {}, data).stdout).toBe('');
+  });
+
+  it.each([undefined, null, 42, '', '   '])('adds no routing text for an invalid session id %s', (session_id) => {
+    expect(runHook(tempDir(), MEDIUM, { session_id }).stdout).toBe('');
   });
 
   it('R15: still prints the routing text with routing.hook false', () => {

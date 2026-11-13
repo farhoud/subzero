@@ -20,20 +20,17 @@ try {
   // The plugin's .mcp.json sets the server's SUBZERO_PROJECT_DIR from
   // CLAUDE_PROJECT_DIR, so that is the key both sides share.
   project = setting(process.env.CLAUDE_PROJECT_DIR);
-  if (typeof input.session_id === 'string' && project) {
-    writeParentSessionId(dataDir(process.env), realpathSync(project), input.session_id, ancestorPids());
-  }
+  if (!project || typeof input.session_id !== 'string' || input.session_id.trim() === '') process.exit(0);
+  writeParentSessionId(dataDir(process.env), realpathSync(project), input.session_id, ancestorPids());
 } catch {
-  // A missing session id only widens the listing; it must not fail the session.
+  // An unreadable input or failed session recording adds no routing text.
+  process.exit(0);
 }
 let output = '';
 try {
   const root = project === undefined ? undefined : realpathSync(project);
-  let taskMode = false;
-  try {
-    const ancestors = ancestorPids();
-    taskMode = root !== undefined && liveReadinessMarkers(dataDir(process.env), root).some((marker) => ancestors.has(marker.ppid) && marker.taskMode);
-  } catch { /* Unknown readiness keeps the waited routing instructions. */ }
+  const ancestors = ancestorPids();
+  const taskMode = root === undefined ? null : liveReadinessMarkers(dataDir(process.env), root).find((marker) => ancestors.has(marker.ppid))?.taskMode ?? null;
   const context = routingContext(root, taskMode);
   if (context !== undefined) {
     output = JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: context } }) + '\n';

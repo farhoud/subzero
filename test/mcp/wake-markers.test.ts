@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -59,5 +59,27 @@ describe('background wake markers', () => {
     const key = (value: string) => createHash('sha256').update(value).digest('hex');
     writeFileSync(path.join(data, 'wake', key('/project'), key('session-a'), key('sz-one'), 'owner'), String(exited.pid));
     expect(markers.read('session-a')).toEqual({ pending: false, notice: undefined });
+    // A competing hook can still restore a claimed result after the orphan check.
+    markers.finish('session-a', 'sz-one', 'restored result');
+    expect(markers.read('session-a')).toEqual({ pending: false, notice: 'restored result' });
+  });
+
+  it('preserves an active claim after its server exits and recovers an abandoned claim', () => {
+    const data = mkdtempSync(path.join(tmpdir(), 'subzero-wake-'));
+    const markers = new WakeMarkers(data, '/project');
+    const key = (value: string) => createHash('sha256').update(value).digest('hex');
+    const folder = path.join(data, 'wake', key('/project'), key('session-a'), key('sz-one'));
+    const exited = spawnSync(process.execPath, ['-e', '']);
+    markers.start('session-a', 'sz-one');
+    markers.finish('session-a', 'sz-one', 'whole result');
+    writeFileSync(path.join(folder, 'owner'), String(exited.pid));
+    const active = path.join(folder, `${process.pid}.active.claim`);
+    renameSync(path.join(folder, 'done'), active);
+    expect(markers.read('session-a')).toEqual({ pending: true, notice: undefined });
+    expect(existsSync(active)).toBe(true);
+    const abandoned = path.join(folder, `${exited.pid}.abandoned.claim`);
+    renameSync(active, abandoned);
+    expect(markers.read('session-a')).toEqual({ pending: true, notice: undefined });
+    expect(markers.read('session-a')).toEqual({ pending: false, notice: 'whole result' });
   });
 });

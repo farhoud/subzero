@@ -119,7 +119,7 @@ function readinessDir(dir: string, projectRoot: string): string {
 export interface ReadinessMarker {
   pid: number;
   ppid: number;
-  taskMode: boolean;
+  taskMode: boolean | null;
 }
 
 export function writeReadinessMarker(dir: string, projectRoot: string, pid: number, ppid: number, taskMode = false): void {
@@ -159,7 +159,7 @@ export function liveReadinessMarkers(dir: string, projectRoot: string): Readines
     try {
       const value = JSON.parse(readFileSync(path.join(folder, name), 'utf8')) as { pid?: unknown; ppid?: unknown; taskMode?: unknown };
       if (Number.isInteger(value.pid) && Number.isInteger(value.ppid) && isAlive(value.pid as number)) {
-        live.push({ pid: value.pid as number, ppid: value.ppid as number, taskMode: value.taskMode === true });
+        live.push({ pid: value.pid as number, ppid: value.ppid as number, taskMode: typeof value.taskMode === 'boolean' ? value.taskMode : null });
       }
     } catch {
       // An unreadable marker counts as absent.
