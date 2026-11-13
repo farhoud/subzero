@@ -340,6 +340,7 @@ describe('AgentConfig starter entries', () => {
       '# keep\nmodels: { tiers: { small: { host: pi, model: local/s, thinking: low } } }\nagents: { helper: { description: h, tools: [read], timeout: 5 } }\n# end\n',
       '# keep\nmodels: { tiers: { small: { host: pi, model: local/s, thinking: low }, } }\nagents: { helper: { description: h, tools: [read], timeout: 5 }, }\n# end\n',
       '# keep\nmodels:\n  tiers: { small: { host: pi, model: local/s, thinking: low } # existing\n  }\nagents: { helper: { description: h, tools: [read], timeout: 5 } # existing\n}\n# end\n',
+      '# keep\nmodels: { tiers: {\n  small: { host: pi, model: local/s, thinking: low } } }\nagents: {\n  helper: { description: h, tools: [read], timeout: 5 } }\n# end\n',
     ]) {
       const root = makeProject(text);
       expect(addStarterEntries(root, SPEC).added).toEqual(['medium', 'general', 'fallback']);

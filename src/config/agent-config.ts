@@ -571,7 +571,7 @@ export function addStarterEntries(projectRoot: string, spec: StarterSpec): Start
         }
         const close = range[1] - 1;
         const lineStart = original.lastIndexOf('\n', close - 1) + 1;
-        const indent = original.slice(lineStart, close);
+        const indent = original.slice(lineStart, close).match(/^\s*/)?.[0] ?? '';
         inserts.push({ at: close, text: `  ${contents}\n${indent}` });
         return true;
       }
