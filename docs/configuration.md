@@ -42,7 +42,6 @@ endpoints:
 
 models:
   tiers:
-    default: { host: pi, model: local/qwen3-coder-30b, thinking: low }
     small:   { host: pi, model: local/qwen3-4b, thinking: off }
     medium:  { host: pi, model: local/qwen3-coder-30b, thinking: medium }
 

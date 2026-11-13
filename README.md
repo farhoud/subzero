@@ -1,8 +1,8 @@
 # subzero
 
-subzero is a Claude Code plugin that hands subagent work to a pi agent running on
-a model you choose, such as a local model or a cheaper hosted one. Claude keeps
-the conversation and gets back only the child's final reply. The child's reading,
+subzero lets Claude Code or pi hand subagent work to a pi agent running on
+a model you choose, such as a local model or a cheaper hosted one. The parent keeps
+the conversation and gets back the child's final reply. The child's reading,
 thinking and tool calls stay in a separate pi session.
 
 It is built for the compound-engineering plugin. That plugin asks for subagents by
@@ -11,6 +11,12 @@ matching tier in its agent file, subzero sends those subagents to your model
 instead of Claude's. Tiers you do not configure stay on Claude.
 
 ## Preview and known limits
+
+The pi extension and updated Claude plugin are built in this branch. The pi
+package branch must be published before the git install command below works.
+The live checks on both parents are still pending. A *parent host* is where you
+work (Claude Code or pi); a *child host* is what subzero starts (pi today).
+See [docs/design.md](docs/design.md) §5.5.
 
 This is an experimental preview, version 0.1.0-preview.1. It makes no
 compatibility promise, and what it does may change between previews. Know these
@@ -23,7 +29,7 @@ limits before you use it:
 - **The general agent can write files and run shell commands inside pi, outside
   Claude Code's permission prompts.** Review what a routed subagent did with git.
 - **The queue is per session.** The `parallel` limit of an endpoint counts only the
-  children of one Claude Code session, so two sessions do not wait for each other.
+  children of one parent session, so two sessions do not wait for each other.
 - **A cloned project's agent file (.agents/subzero.yaml) is executable-grade
   configuration (it chooses models, tools and can enable a general agent with
   shell access); use routing only in repositories you trust.**
@@ -33,7 +39,7 @@ limits before you use it:
   works in the shared checkout.
 
 The plugin's hooks run in every project where it is installed: one when a session
-starts and one on every Agent call. Each costs a short Node process. In a project
+starts, one on every Agent call, and a background completion hook at Stop. In a project
 with no agent file the hook does nothing: it prints no message, adds no routing
 text and lets every subagent run on Claude.
 
@@ -66,11 +72,28 @@ In a Claude Code session the same two steps are `/plugin marketplace add
 qoherent/sub0@plugin` and `/plugin install subzero@qoherent`; the install command
 opens the plugin's details, where you choose a scope. Run `/reload-plugins` or
 start a new session. There is nothing to clone or build. Typing `/subzero:` should
-now list `init` and `tasks`.
+now list `init`, `tasks` and `cancel`.
 
 When releases are published, the install command will change to the `qoherent`
 marketplace of the organization. Remove this one first, because both use the name
 `qoherent`: `claude plugin marketplace remove qoherent`.
+
+### Install the pi extension
+
+Remove pi-subagents from `~/.pi/agent/settings.json` before installing: both
+packages register `subagent`. Once the `pi` branch is published, run:
+
+```sh
+pi install git:github.com/qoherent/sub0@pi
+```
+
+For a local checkout, run `npm run release:pi:build` and load the staged
+extension with `pi -e ./dist-pi-package/dist/pi-extension.js`. Set up the
+project first with `sh bin/subzero init <model>` from the checkout, or with
+`/subzero:init <model>` in Claude Code. The pi `subagent` tool runs in the
+background by default and reports completed results; `/subzero` shows tasks and
+`/subzero cancel` stops a task or the session's tasks. On Claude, use
+`/subzero:cancel` to stop the current session's tasks.
 
 ## Set up a model
 
@@ -82,20 +105,20 @@ with the model name that pi lists, as `provider/model`:
 ```
 
 For example `/subzero:init local/qwen`. Claude Code may ask you to allow the
-command once. It writes `.agents/subzero.yaml` with a `default` tier on that model,
+command once. It writes `.agents/subzero.yaml` with a `medium` tier on that model,
 a `general` agent that can read, write and run commands, and a read-only `fallback`
 agent. Optional arguments are `--timeout <seconds>` (default 1200) and
 `--thinking <level>` (default medium). If pi is not installed, it says so and
-writes nothing.
+writes nothing. In an existing file, init adds missing starter entries and
+keeps existing settings; it refuses incompatible or invalid entries. Empty or
+flow-style maps are rewritten to add missing entries.
 
-Compound-engineering asks for the tiers `small`, `medium` and `large`, and `init`
-writes none of them. To route its mid-tier subagents, open `.agents/subzero.yaml`
-and add a `medium` tier next to `default`, on the same host and model or another:
+Compound-engineering asks for the tiers `small`, `medium` and `large`. The starter
+`medium` tier routes mid-tier work; add the other tiers to route them as well:
 
 ```yaml
 models:
   tiers:
-    default: { host: pi, model: local/qwen, thinking: medium }
     medium: { host: pi, model: local/qwen, thinking: medium }
 ```
 
@@ -130,7 +153,7 @@ words go to subzero, and a hook catches a generic subagent spawn for a
 configured tier that slips past. What reaches your model depends on whether the
 request names a tier.
 
-| What you ask Claude | With `default` + `medium` | With `large` added too |
+| What you ask Claude | With `medium` | With `large` added too |
 |---|---|---|
 | "Use a mid-tier subagent to ..." | subzero, `general:medium` | subzero, `general:medium` |
 | "Use the general agent on the medium tier to ..." | subzero, `general:medium` | subzero, `general:medium` |
@@ -142,7 +165,7 @@ request names a tier.
 The table comes from headless runs with Claude Code 2.1.318 and a local model.
 Each cell that says subzero routed every time it was tried; "usually" means the
 plain request went to Claude in two of three runs. The delegate-tool row, and
-`Explore` with `default` + `medium`, follow from how routing works and were not
+`Explore` with `medium`, follow from how routing works and were not
 run separately.
 
 The rules behind it:
@@ -182,7 +205,7 @@ agents:
     skills: [file-facts]     # names from the skills map; leave out for no skills
     tools: [read, grep, find, ls]
     timeout: 120             # seconds, required
-    tier: medium             # optional; without it the agent runs on default
+    tier: medium             # optional; without it the agent runs on medium
 ```
 
 A skill folder holds a `SKILL.md`, as for any Agent Skill. Keep it out of

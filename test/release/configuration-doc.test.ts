@@ -46,7 +46,7 @@ describe('docs/configuration.md', () => {
   it('has a complete example that loads and resolves as the page says', () => {
     const root = projectWith(yamlAfter('## A complete example'));
     const catalog = loadAgentFile(root);
-    expect([...catalog.tiers.keys()]).toEqual(['default', 'small', 'medium']);
+    expect([...catalog.tiers.keys()]).toEqual(['small', 'medium']);
     expect([...catalog.entries.keys()]).toEqual(['general', 'fallback', 'file-facts']);
     expect(catalog.limits.get('local')).toBe(1);
     expect(catalog.routing).toEqual({ hook: true, genericAgents: ['general-purpose', 'claude'] });

@@ -145,8 +145,8 @@ and the output you expect. The sub-agent cannot see this conversation. $ARGUMENT
 |---|---|---|
 | Main conversation, interactive | Blocks for up to 120s, then **auto-backgrounds** (2.1.212). Claude gets a task id, keeps working, and is notified when the result lands. | Send `notifications/progress` at least every 60s, which resets the 30-min stdio idle timeout. Nothing else: native background works. |
 | A Claude subagent (Agent tool) | Never auto-backgrounds; blocks the subagent | Progress plus a wall-clock limit. Offer `wait: false` + `await`. |
-| `claude -p` / SDK | Not backgrounded unless `CLAUDE_AUTO_BACKGROUND_TASKS=1`, and a backgrounded result is lost at exit | Default to `wait` in `-p`. Use `CLAUDECODE` and the session mode to choose. |
-| MCP Tasks (2.1.304+, protocol 2026-07-28, TS SDK v2, CLI only) | Claude polls `tasks/get` and cancels with `tasks/cancel` | Phase 2: answer with a task only when the request's `_meta` advertises the extension. |
+| `claude -p` / SDK | Not backgrounded unless `CLAUDE_AUTO_BACKGROUND_TASKS=1`, and a backgrounded result is lost at exit | Wait in non-interactive or unknown mode. The current parent-process check also treats terminal-less IDE and SDK sessions conservatively as non-interactive. |
+| MCP tasks | A task-augmented `tools/call` gets a handle; the client can poll `tasks/get`, collect with `tasks/result`, and cancel with `tasks/cancel`. | Built using SDK 1.32's experimental task protocol when a call carries `params.task`. Claude Code 2.1.322 did not select it in our probe; an `asyncRewake` hook supplies completion notices for ordinary background calls. See [spike-results.md](spike-results.md). |
 
 Progress text should come from domain events, e.g. `semanticizer · turn 3 · read src/model.ts`, so the
 user sees real activity in the collapsed tool view and in `/tasks`. It is one line (agent, kind of the

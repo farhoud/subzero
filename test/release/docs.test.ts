@@ -59,6 +59,12 @@ describe('README.md', () => {
     for (const skill of ['init', 'tasks']) expect(existsSync(path.join(REPO, 'skills', skill, 'SKILL.md'))).toBe(true);
   });
 
+  it('documents the pi package and removing the competing extension', () => {
+    expect(README).toContain('pi install git:github.com/qoherent/sub0@pi');
+    expect(README).toMatch(/remove pi-subagents.{0,100}settings\.json/i);
+    expect(README).toContain('/subzero:cancel');
+  });
+
   it('says this is an experimental preview and names the version', () => {
     expect(README).toMatch(/experimental preview/i);
     expect(README).toContain(pkg.version);
