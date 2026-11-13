@@ -36,6 +36,13 @@ function setup(yaml: string | undefined, marker = true) {
 const spawnOf = (prompt: string, extra: Partial<SpawnInput> = {}): SpawnInput => ({ prompt, description: 'review things', ...extra });
 
 describe('decideAgentSpawn', () => {
+  it('omits the await choreography when the matching server has task mode on', () => {
+    const { root, data, ctx } = setup(config(['medium']), false);
+    writeReadinessMarker(data, root, process.pid, process.ppid, true);
+    const out = decideAgentSpawn(spawnOf('review', { model: 'sonnet' }), ctx());
+    expect(out.decision).toBe('deny');
+    if (out.decision === 'deny') expect(out.reason).not.toMatch(/wait: false|collect it with the await tool/);
+  });
   it('AE5: denies a generic sonnet spawn toward medium, naming delegate, tier and wait false', () => {
     const { ctx } = setup(config(['medium']));
     const out = decideAgentSpawn(spawnOf('do the review', { model: 'sonnet', subagent_type: 'general-purpose' }), ctx());

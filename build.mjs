@@ -8,6 +8,7 @@ const { version } = JSON.parse(readFileSync(new URL('./package.json', import.met
 const entries = {
   server: 'src/mcp/main.ts',
   hook: 'src/mcp/session-hook.ts',
+  'wake-hook': 'src/mcp/wake-hook.ts',
   'agent-hook': 'src/routing/agent-hook.ts',
   cli: 'src/cli/main.ts',
   'pi-extension': 'src/pi-parent/main.ts',

@@ -56,6 +56,12 @@ describe('generic spawn test', () => {
 describe('routing text', () => {
   const textFor = (root: string) => buildRoutingText(wordTiers(routableTiers(root)));
 
+  it('omits the await choreography when task mode is on', () => {
+    const text = buildRoutingText(wordTiers(routableTiers(project(config('medium')))), true);
+    expect(text).toMatch(/completed tasks deliver their results/i);
+    expect(text).not.toMatch(/wait: false|timeout_s: 600/);
+  });
+
   it('AE1: with only medium configured, sends mid-tier to delegate and keeps the other tier words on Claude', () => {
     const text = textFor(project(config('medium')));
     expect(text).toMatch(/mid-tier[^\n]*medium[^\n]*tier: "medium"/);

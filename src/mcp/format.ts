@@ -39,16 +39,23 @@ function deferredLine(reply: Extract<CollectReply, { kind: 'result' }>): string 
  * keeps its status line.
  */
 export function formatAwait(replies: CollectReply[], limit = TOOL_RESULT_LIMIT, now = Date.now()): string {
+  return formatAwaitWithShown(replies, limit, now).body;
+}
+
+/** The complete result sections actually included in an await response. */
+export function formatAwaitWithShown(replies: CollectReply[], limit = TOOL_RESULT_LIMIT, now = Date.now()): { body: string; shown: string[] } {
   const sections: string[] = [];
+  const shown: string[] = [];
   let length = 0;
   for (const reply of replies) {
     const whole = describeReply(reply, undefined, now);
     const joined = length + (sections.length > 0 ? 2 : 0) + whole.length;
     const section = reply.kind === 'result' && sections.length > 0 && joined > limit ? deferredLine(reply) : whole;
+    if (reply.kind === 'result' && section === whole) shown.push(reply.result.taskId);
     length += (sections.length > 0 ? 2 : 0) + section.length;
     sections.push(section);
   }
-  return sections.join('\n\n');
+  return { body: sections.join('\n\n'), shown };
 }
 
 /**

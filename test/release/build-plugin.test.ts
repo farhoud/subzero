@@ -7,7 +7,7 @@ import { tempDir } from '../helpers.js';
 
 const REPO = path.resolve(import.meta.dirname, '..', '..');
 const SCRIPT = path.join(REPO, 'scripts', 'build-plugin.mjs');
-const BUNDLES = ['agent-hook', 'cli', 'hook', 'server'];
+const BUNDLES = ['agent-hook', 'cli', 'hook', 'server', 'wake-hook'];
 const HAS_CLAUDE = spawnSync('claude', ['--version'], { encoding: 'utf8' }).status === 0;
 
 /** Exactly what a release ships (KTD4): any other file in the staged plugin is a leak. */

@@ -9,9 +9,9 @@
 }
 @design/kernel.sigil from Kernel import { parent adapter, parent host, child host }
 @design/delegation-service.sigil from DelegationService import {
-  brief text, queued task,
+  brief text, queued task, result text, completion notice,
 }
-@design/task-store.sigil from TaskStore import { parent session id }
+@design/task-store.sigil from TaskStore import { parent session id, store folder }
 @design/task-core.sigil from TaskCore import { task id, start time, child driver }
 
 component ClaudeRoutingHooks {
@@ -70,9 +70,21 @@ component ClaudeRoutingHooks {
 
     The *deny reason* is the text Claude sees when the hook denies an
     Agent spawn.
+
+    A *wake marker* is a plugin data folder entry for one background task of a
+    parent session id. The *wake hook* is an asyncRewake Stop hook that watches
+    only those entries, never the store folder.
   }
 
   logic {
+    When a Stop event starts the wake hook, it waits while a wake marker of
+    that parent session id is pending. When a marker records a result text and
+    completion notice, the hook atomically claims it and exits with both, waking
+    Claude. If no marker remains, it exits without waking Claude. Competing
+    wake hooks cannot claim the same marker. Before the hook's timeout, when
+    work is still pending, it wakes Claude with a reminder to keep waiting; the
+    next Stop event starts a fresh wake hook for that work.
+
     At each session start, after the parent session id is recorded, read the
     agent file under the project root that CLAUDE_PROJECT_DIR names. When no
     project root is given or the agent file is missing, add nothing and end
@@ -122,7 +134,9 @@ component ClaudeRoutingHooks {
     Claude to dispatch every routed subagent
     with wait false in one message and then call the await tool with every
     task id
-    and up to 600 seconds until every task is done. While the task mode is on,
+    and up to 600 seconds until every task is done. A non-interactive server
+    waits even for wait false and returns the result in that delegate call.
+    While the task mode is on,
     it
     must tell Claude to dispatch every routed subagent in one message without
     asking to wait, so that each becomes an MCP task, and to wait for every
@@ -337,6 +351,9 @@ component ClaudeRoutingHooks {
   }
 
   interface {
+    The wake hook reads each wake marker of the current parent session id and
+    delivers its result text and completion notice when it is complete.
+
     Add the routing text to Claude's context at each session start, resume,
     /clear and compaction, built from the agent file under the project root
     that CLAUDE_PROJECT_DIR names, read at that moment, or a

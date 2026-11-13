@@ -146,6 +146,50 @@ describe('ClaudeMcpServer', () => {
     await until(() => !isAlive(fake.log()[0].pid));
   });
 
+  it.each([false, true])('cancels %s other session tasks when a waited delegate is aborted', async (late) => {
+    const { call, service, started } = await connectManual(TIERED_YAML, 'session-a');
+    await call('delegate', { agent: 'free', brief: 'background', wait: false });
+    const clock = vi.spyOn(Date, 'now');
+    const initial = Date.now();
+    clock.mockReturnValue(initial);
+    try {
+      const abort = new AbortController();
+      const pending = call('delegate', { agent: 'free', brief: 'waited' }, { signal: abort.signal }).catch(() => undefined);
+      await until(() => started.length === 2);
+      if (late) clock.mockReturnValue(initial + 120_001);
+      abort.abort();
+      await pending;
+      await until(() => service.store.readTask(started[1]!.taskId)?.status === 'cancelled');
+      if (!late) await until(() => service.store.readTask(started[0]!.taskId)?.status === 'cancelled');
+      expect(service.store.readTask(started[0]!.taskId)?.status).toBe(late ? 'running' : 'cancelled');
+    } finally {
+      clock.mockRestore();
+      started[0]!.settle();
+    }
+  });
+
+  it.each([false, true])('cancels session tasks on a waited await only before 120 seconds (late: %s)', async (late) => {
+    const { call, textOf, idIn, service, started } = await connectManual(TIERED_YAML, 'session-a');
+    const ids = [idIn(textOf(await call('delegate', { agent: 'free', brief: 'one', wait: false }))),
+      idIn(textOf(await call('delegate', { agent: 'free', brief: 'two', wait: false })))];
+    const clock = vi.spyOn(Date, 'now');
+    const initial = Date.now();
+    clock.mockReturnValue(initial);
+    try {
+      const abort = new AbortController();
+      const pending = call('await', { tasks: ids, timeout_s: 30 }, { signal: abort.signal }).catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (late) clock.mockReturnValue(initial + 120_001);
+      abort.abort();
+      await pending;
+      if (!late) await until(() => ids.every((id) => service.store.readTask(id)?.status === 'cancelled'));
+      expect(ids.map((id) => service.store.readTask(id)?.status)).toEqual(late ? ['running', 'running'] : ['cancelled', 'cancelled']);
+    } finally {
+      clock.mockRestore();
+      started.forEach((task) => task.settle());
+    }
+  });
+
   it('returns the unresolved root error as a tool error that says not to retry', async () => {
     const { call } = await connect({}, {});
     const result: any = await call('delegate', { agent: 'helper', brief: 'go' });

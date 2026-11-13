@@ -135,8 +135,24 @@ the low-level task protocol, but these calls do not demonstrate that the client
 will select it. No reliable environment flag distinguishing the two modes was
 established.
 
+A follow-up process probe launched Claude Code 2.1.322 in a terminal: `ps`
+reported its process with a `ttys...` terminal and command `claude`. The
+earlier `claude -p` server probe reported no controlling terminal and a
+command containing `-p`. The server therefore treats a parent without a
+terminal, one with a print flag, or one it cannot inspect as non-interactive.
+This is deliberately conservative: an IDE or SDK client without a controlling
+terminal also waits, even if a human is interacting with it.
+
 A separate interactive probe registered an `asyncRewake` Stop hook. After the
 first assistant turn ended, the hook exited with code 2 and feedback; Claude
 started another turn without a user prompt, and the second Stop hook ran. This
 confirms the hook wake mechanism for the fallback. The probe used only temporary
 files and did not install a hook in the project.
+
+The two-parent acceptance run in the pi parent plan is still pending. A person
+must check a real compound-engineering review and local child on pi, including
+notices, Escape, `/subzero cancel`, `/new`, and the shell task listing. On Claude
+Code, the remaining checks cover background delivery, Escape during `await`,
+stopping one task, the 120-second boundary, `/subzero:cancel`, and `/clear`.
+The 2.1.322 probe above did not select MCP tasks, so it does not establish that
+delegations appear as MCP tasks in Claude's `/tasks` view.

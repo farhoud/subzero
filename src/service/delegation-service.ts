@@ -45,6 +45,7 @@ export class EmptyBriefError extends Error {
 
 export interface DelegateOptions {
   wait: boolean;
+  onTask?: (taskId: string) => void;
   onEvent?: (event: DomainEvent) => void;
   onState?: (state: ChildRunState) => void;
   /** Aborting it cancels the task. */
@@ -273,6 +274,7 @@ export class DelegationService {
       void task.result.finally(() => signal.removeEventListener('abort', onAbort));
     }
     this.limiter.admit(task, agent.endpoint, agent.parallel);
+    options.onTask?.(task.taskId);
     // Only a run the limiter kept back is reported as Pending.
     if (task.state === 'Pending') options.onState?.('Pending');
 
@@ -340,6 +342,12 @@ export class DelegationService {
     clearTimeout(timer);
     // Read the task again: it may have been released while this call waited.
     return result === null ? this.collect(taskId) : { kind: 'result', result };
+  }
+
+  /** Wait for a task owned by this process without a polling deadline. */
+  async waitForCompletion(taskId: string): Promise<CollectReply> {
+    const live = this.registry.get(taskId);
+    return live === undefined ? this.collect(taskId) : { kind: 'result', result: await live.result };
   }
 
   async cancel(taskId: string): Promise<CollectReply> {
