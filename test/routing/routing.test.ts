@@ -22,7 +22,7 @@ function project(yaml?: string): string {
 }
 
 const tier = (name: string, model: string) => `    ${name}: { host: pi, model: ${model}, thinking: low }\n`;
-const GENERAL = 'agents:\n  general:\n    tools: [read, bash]\n    timeout: 60\n';
+const GENERAL = 'agents:\n  general:\n    tools: [read, bash]\n    timeout: 60\n  fallback:\n    tools: [read]\n    timeout: 60\n';
 const config = (...names: string[]) =>
   `models:\n  tiers:\n${tier('default', 'local/d')}${names.map((n) => tier(n, `local/${n}`)).join('')}${GENERAL}`;
 
@@ -55,6 +55,22 @@ describe('generic spawn test', () => {
 
 describe('routing text', () => {
   const textFor = (root: string) => buildRoutingText(wordTiers(routableTiers(root)));
+
+  it('omits the await choreography when task mode is on', () => {
+    const text = buildRoutingText(wordTiers(routableTiers(project(config('medium')))), true);
+    expect(text).toMatch(/completed tasks deliver their results/i);
+    expect(text).not.toMatch(/wait: false|timeout_s: 600/);
+    expect(text).toMatch(/one message/);
+    expect(text).toMatch(/every completion notice/);
+    expect(text).toMatch(/await reply[^\n]*not show[^\n]*tasks/i);
+  });
+
+  it('uses mode-neutral instructions when no readiness marker is known', () => {
+    const text = buildRoutingText(wordTiers(routableTiers(project(config('medium')))), null);
+    expect(text).toMatch(/if it returns a task id, collect it/i);
+    expect(text).not.toMatch(/wait: false|timeout_s: 600/);
+    expect(text).toMatch(/one message/);
+  });
 
   it('AE1: with only medium configured, sends mid-tier to delegate and keeps the other tier words on Claude', () => {
     const text = textFor(project(config('medium')));
@@ -116,11 +132,11 @@ describe('routingContext', () => {
     expect(routingContext(project())).toBeUndefined();
   });
 
-  it('AE3: returns nothing with no tiers, with no agents, with a default tier only and without a general entry', () => {
-    expect(routingContext(project('endpoints: {}\n'))).toBeUndefined();
-    expect(routingContext(project(config()))).toBeUndefined();
-    expect(routingContext(project(`models:\n  tiers:\n${tier('default', 'local/d')}`))).toBeUndefined();
-    expect(routingContext(project(`models:\n  tiers:\n${tier('default', 'local/d')}${tier('medium', 'local/m')}agents:\n  helper:\n    description: x\n    tools: [read]\n    timeout: 5\n`))).toBeUndefined();
+  it('warns when required entries are missing', () => {
+    expect(routingContext(project('endpoints: {}\n'))).toMatch(/routing is off/);
+    expect(routingContext(project(config()))).toMatch(/medium/);
+    expect(routingContext(project(`models:\n  tiers:\n${tier('default', 'local/d')}`))).toMatch(/medium/);
+    expect(routingContext(project(`models:\n  tiers:\n${tier('medium', 'local/m')}agents:\n  helper:\n    description: x\n    tools: [read]\n    timeout: 5\n`))).toMatch(/general/);
   });
 
   it('returns a one-line warning for a file that exists and fails to load', () => {

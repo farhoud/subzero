@@ -145,6 +145,11 @@ export class Task {
     return this.result;
   }
 
+  /** Record cancellation when a child did not stop before shutdown's deadline. */
+  forceCancel(): void {
+    if (this.finalResult === undefined) this.finish({ taskId: this.taskId, agent: this.agent.name, status: 'cancelled' });
+  }
+
   private handleEvent(event: DomainEvent): void {
     if (this.finalResult !== undefined) return;
     try {

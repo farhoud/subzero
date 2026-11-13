@@ -16,9 +16,9 @@ const unroute = (text: string, name: string) => text.replace(`\`${name}\``, '`<r
 describe('SigilWiring', () => {
   it('puts the three interpreter agents on the default, low and control tiers of the host pi, sharing the r9700 limit', () => {
     const { entries, tiers } = loadAgentFile(EXAMPLE);
-    expect([...entries.keys()].sort()).toEqual(['sigil-interpreter', 'sigil-interpreter-control', 'sigil-interpreter-low']);
-    expect([...tiers.keys()]).toEqual(['default', 'low', 'control']);
-    expect(tiers.get('default')).toEqual({ host: 'pi', model: 'r9700/Qwen3.8', thinking: 'high' });
+    expect([...entries.keys()].sort()).toEqual(['fallback', 'general', 'sigil-interpreter', 'sigil-interpreter-control', 'sigil-interpreter-low']);
+    expect([...tiers.keys()]).toEqual(['medium', 'low', 'control']);
+    expect(tiers.get('medium')).toEqual({ host: 'pi', model: 'r9700/Qwen3.8', thinking: 'high' });
     expect(tiers.get('low')).toEqual({ host: 'pi', model: 'r9700/Qwen3.8', thinking: 'low' });
     expect(tiers.get('control')).toEqual({ host: 'pi', model: 'anthropic/claude-sonnet-5-5', thinking: 'high' });
     const qwen = getAgent(EXAMPLE, 'sigil-interpreter');
@@ -87,17 +87,20 @@ agents:
   general:
     tools: [read]
     timeout: 60
+  fallback:
+    tools: [read]
+    timeout: 60
 `;
 
-  function runHook(project: string | undefined, yaml: string | undefined, input: Record<string, unknown> = {}) {
+  function runHook(project: string | undefined, yaml: string | undefined, input: Record<string, unknown> = {}, data = tempDir()) {
     execFileSync(process.execPath, ['build.mjs'], { cwd: REPO });
-    const data = tempDir();
     if (project !== undefined && yaml !== undefined) {
       mkdirSync(path.join(project, '.agents'), { recursive: true });
       writeFileSync(path.join(project, '.agents', 'subzero.yaml'), yaml);
     }
     const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_PLUGIN_DATA: data };
     delete env.CLAUDE_PROJECT_DIR;
+    delete env.SUBZERO_DATA;
     if (project !== undefined) env.CLAUDE_PROJECT_DIR = project;
     const stdout = execFileSync(process.execPath, [path.join(REPO, 'dist', 'hook.js')], {
       input: JSON.stringify({ session_id: 's-1', source: 'startup', ...input }),
@@ -113,8 +116,20 @@ agents:
     expect(out.hookSpecificOutput.hookEventName).toBe('SessionStart');
     expect(out.hookSpecificOutput.additionalContext).toContain('mcp__plugin_subzero_subzero__delegate');
     expect(out.hookSpecificOutput.additionalContext).toContain('tier: "medium"');
+    expect(out.hookSpecificOutput.additionalContext).toMatch(/if it returns a task id, collect it/i);
+    expect(out.hookSpecificOutput.additionalContext).not.toContain('wait: false');
     expect(out.hookSpecificOutput.additionalContext.length).toBeLessThan(3000);
     expect(readParentSessionId(data, project, process.pid)).toBe('s-1');
+  });
+
+  it('adds no routing text when it cannot record the session', () => {
+    const data = path.join(tempDir(), 'not-a-directory');
+    writeFileSync(data, 'file');
+    expect(runHook(tempDir(), MEDIUM, {}, data).stdout).toBe('');
+  });
+
+  it.each([undefined, null, 42, '', '   '])('adds no routing text for an invalid session id %s', (session_id) => {
+    expect(runHook(tempDir(), MEDIUM, { session_id }).stdout).toBe('');
   });
 
   it('R15: still prints the routing text with routing.hook false', () => {
@@ -122,15 +137,15 @@ agents:
     expect(JSON.parse(stdout).hookSpecificOutput.additionalContext).toContain('tier: "medium"');
   });
 
-  it('AE3: prints nothing when no tiers are configured and still records the session id', () => {
+  it('warns when the required tier is missing and still records the session id', () => {
     const project = tempDir();
     const { stdout, data } = runHook(project, 'endpoints: {}\n');
-    expect(stdout).toBe('');
+    expect(JSON.parse(stdout).hookSpecificOutput.additionalContext).toMatch(/medium.*required/);
     expect(readParentSessionId(data, project, process.pid)).toBe('s-1');
   });
 
-  it('prints nothing for a default tier only and for a project with no agent file', () => {
-    expect(runHook(tempDir(), 'models:\n  tiers:\n    default: { host: pi, model: a/b, thinking: low }\n').stdout).toBe('');
+  it('warns for a default tier only and prints nothing when the file is absent', () => {
+    expect(JSON.parse(runHook(tempDir(), 'models:\n  tiers:\n    default: { host: pi, model: a/b, thinking: low }\n').stdout).hookSpecificOutput.additionalContext).toMatch(/medium.*required/);
     expect(runHook(tempDir(), undefined).stdout).toBe('');
   });
 

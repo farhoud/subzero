@@ -59,6 +59,12 @@ describe('README.md', () => {
     for (const skill of ['init', 'tasks']) expect(existsSync(path.join(REPO, 'skills', skill, 'SKILL.md'))).toBe(true);
   });
 
+  it('documents the pi package and removing the competing extension', () => {
+    expect(README).toContain('pi install git:github.com/qoherent/sub0@pi');
+    expect(README).toMatch(/remove pi-subagents.{0,100}settings\.json/i);
+    expect(README).toContain('/subzero:cancel');
+  });
+
   it('says this is an experimental preview and names the version', () => {
     expect(README).toMatch(/experimental preview/i);
     expect(README).toContain(pkg.version);
@@ -92,6 +98,8 @@ describe('README.md', () => {
     expect(prerequisites).toMatch(/model/i);
     expect(prerequisites).toMatch(/macOS/);
     expect(prerequisites).toMatch(/Linux/);
+    expect(prerequisites).toContain('`lockf`');
+    expect(prerequisites).toContain('`flock`');
     expect(prerequisites).toMatch(/Windows[^.]*not supported/i);
     expect(prerequisites).toMatch(/current Claude Code/);
   });

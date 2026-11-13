@@ -22,10 +22,12 @@ import { makeProject, tempDir } from '../helpers.js';
 const TIERS = `models:
   tiers:
     default: { host: pi, model: local/m, thinking: high }
+    medium: { host: pi, model: local/m, thinking: high }
 `;
 
 function project(agents: string, extra = '', tiers = TIERS): string {
-  return makeProject(`skills:\n  alpha: ./skills/alpha\n${extra}${tiers}agents:\n${agents}`);
+  const required = `${agents.includes('  general:') ? '' : GENERAL}${agents.includes('  fallback:') ? '' : FALLBACK}`;
+  return makeProject(`skills:\n  alpha: ./skills/alpha\n${extra}${tiers}agents:\n${agents}${required}`);
 }
 
 const VALID = `  a:
@@ -54,6 +56,13 @@ const MEDIUM_TIERS = `models:
 `;
 
 describe('AgentConfig load', () => {
+  it('requires medium, general and fallback and defaults a request to medium', () => {
+    const complete = `${MEDIUM_TIERS}agents:\n${GENERAL}${FALLBACK}`;
+    expect(getAgent(makeProject(complete), undefined).model).toBe('r9700/Qwen3.8');
+    expect(() => loadAgentFile(makeProject(complete.replace('    medium: { host: pi, model: r9700/Qwen3.8, thinking: low }\n', '')))).toThrow(/medium/);
+    expect(() => loadAgentFile(makeProject(`${MEDIUM_TIERS}agents:\n${FALLBACK}`))).toThrow(/general/);
+    expect(() => loadAgentFile(makeProject(`${MEDIUM_TIERS}agents:\n${GENERAL}`))).toThrow(/fallback/);
+  });
   it('loads a valid agent on the default tier with absolute skill folders', () => {
     const root = project(VALID);
     const agent = getAgent(root, 'a');
@@ -89,7 +98,7 @@ describe('AgentConfig load', () => {
   });
 
   it('still loads a skill folder that does not exist on disk', () => {
-    const root = makeProject(`skills:\n  ghost: ./nowhere\n${TIERS}agents:\n${VALID.replace('[alpha]', '[ghost]')}`);
+    const root = makeProject(`skills:\n  ghost: ./nowhere\n${TIERS}agents:\n${VALID.replace('[alpha]', '[ghost]')}${GENERAL}${FALLBACK}`);
     expect(getAgent(root, 'a').skills[0]!.folder).toBe(path.join(root, '.agents', 'nowhere'));
   });
 
@@ -100,19 +109,8 @@ describe('AgentConfig load', () => {
       expect.unreachable();
     } catch (err) {
       expect(err).toBeInstanceOf(UnknownAgentError);
-      expect((err as UnknownAgentError).configured).toEqual(['a', 'b']);
+      expect((err as UnknownAgentError).configured).toEqual(['a', 'b', 'general', 'fallback']);
       expect((err as Error).message).toMatch(/zed.*a, b/);
-    }
-  });
-
-  it('says that no agent was named, and still lists the entries, when the name is left out and there is no general', () => {
-    const root = project(VALID);
-    try {
-      getAgent(root, undefined);
-      expect.unreachable();
-    } catch (err) {
-      expect(err).toBeInstanceOf(UnknownAgentError);
-      expect((err as Error).message).toMatch(/no agent was named.*a/);
     }
   });
 
@@ -133,9 +131,9 @@ describe('AgentConfig load', () => {
   it('reads the agent file again on each call', () => {
     const root = project(VALID);
     expect(getAgent(root, 'a').thinking).toBe('high');
-    writeFileSync(path.join(root, '.agents', 'subzero.yaml'), `skills:\n  alpha: ./skills/alpha\n${TIERS.replace('high', 'low')}agents:\n${VALID}`);
+    writeFileSync(path.join(root, '.agents', 'subzero.yaml'), `skills:\n  alpha: ./skills/alpha\n${TIERS.replaceAll('high', 'low')}agents:\n${VALID}${GENERAL}${FALLBACK}`);
     expect(getAgent(root, 'a').thinking).toBe('low');
-    writeFileSync(path.join(root, '.agents', 'subzero.yaml'), `skills:\n  alpha: ./skills/alpha\n${MEDIUM_TIERS}agents:\n${VALID}`);
+    writeFileSync(path.join(root, '.agents', 'subzero.yaml'), `skills:\n  alpha: ./skills/alpha\n${MEDIUM_TIERS}agents:\n${VALID}${GENERAL}${FALLBACK}`);
     expect(configuredTierNames(root)).toEqual(['default', 'small', 'medium', 'large']);
   });
 
@@ -143,6 +141,7 @@ describe('AgentConfig load', () => {
     const tiers = `models:
   tiers:
     default: { host: pi, model: r9700/Qwen3.8, thinking: high }
+    medium: { host: pi, model: r9700/Qwen3.8, thinking: high }
     small: { host: pi, model: r9700/Qwen3.8-small, thinking: high }
     cloud: { host: pi, model: anthropic/claude, thinking: high }
 `;
@@ -161,7 +160,7 @@ describe('AgentConfig load', () => {
   it('accepts an endpoint entry that only a tier model, or only an override model, belongs to', () => {
     const onlyTier = project(VALID, 'endpoints:\n  local:\n    parallel: 2\n');
     expect(getAgent(onlyTier, 'a').parallel).toBe(2);
-    const override = VALID.replace('skills', 'tiers:\n      default: { model: gpu/x }\n    skills');
+    const override = VALID.replace('skills', 'tiers:\n      medium: { model: gpu/x }\n    skills');
     const viaOverride = project(override, 'endpoints:\n  gpu:\n    parallel: 3\n');
     expect(getAgent(viaOverride, 'a')).toMatchObject({ endpoint: 'gpu', parallel: 3 });
   });
@@ -220,12 +219,6 @@ describe('AgentConfig model tiers', () => {
     expect(() => loadAgentFile(project(badField))).toThrow(/agent "a".*default.*timeout/);
   });
 
-  it('fails the load naming default when agents hold an entry and no default tier exists', () => {
-    const noDefault = `models:\n  tiers:\n    medium: { host: pi, model: local/m, thinking: low }\n`;
-    expect(() => loadAgentFile(project(VALID, '', noDefault))).toThrow(/default/);
-    expect(() => loadAgentFile(project(VALID, '', ''))).toThrow(/default/);
-  });
-
   it('requires host, model and thinking in every tier, naming it', () => {
     for (const medium of ['{ model: local/m, thinking: high }', '{ host: pi, thinking: high }', '{ host: pi, model: local/m }']) {
       const tiers = `models:\n  tiers:\n    default: { host: pi, model: local/m, thinking: high }\n    medium: ${medium}\n`;
@@ -233,22 +226,7 @@ describe('AgentConfig model tiers', () => {
     }
   });
 
-  it('loads a file with no agent entries and no tiers, with no tiers', () => {
-    const root = makeProject('skills: {}\nagents: {}\n');
-    const catalog = loadAgentFile(root);
-    expect(catalog.tiers.size).toBe(0);
-    expect(configuredTierNames(root)).toEqual([]);
-    expect(routableTiers(root)).toEqual([]);
-  });
-
-  it('loads an agents map that holds only general', () => {
-    const root = project(GENERAL);
-    expect(getAgent(root, 'general').name).toBe('general');
-    expect(Object.keys(Object.fromEntries(loadAgentFile(root).entries))).toEqual(['general']);
-  });
-
   it('lists routable tiers only while agents holds general, with the host and model each runs', () => {
-    expect(routableTiers(project(VALID, '', MEDIUM_TIERS))).toEqual([]);
     const root = project(GENERAL, '', MEDIUM_TIERS);
     expect(routableTiers(root, ['pi'])).toEqual([
       { tier: 'default', host: 'pi', model: 'r9700/Qwen3.8', thinking: 'high' },
@@ -297,7 +275,7 @@ describe('AgentConfig model tiers', () => {
   });
 
   it('raises the tier error for a host that comes from an override, without failing the load', () => {
-    const agent = VALID.replace('skills', 'tiers:\n      default: { host: codex }\n    skills');
+    const agent = VALID.replace('skills', 'tiers:\n      medium: { host: codex }\n    skills');
     const root = project(agent);
     expect(loadAgentFile(root).entries.has('a')).toBe(true);
     expect(() => getAgent(root, 'a', { supportedHosts: ['pi'] })).toThrow(/codex.*pi/);
@@ -308,7 +286,6 @@ describe('AgentConfig model tiers', () => {
     expect(getAgent(root, 'fallback', { tier: 'medium' }).tools).toEqual(['read']);
     expect(getAgent(root, 'general', { tier: 'medium' }).tools).toEqual(['read', 'write', 'bash']);
     expect(loadAgentFile(root).entries.has('fallback')).toBe(true);
-    expect(loadAgentFile(project(GENERAL)).entries.has('fallback')).toBe(false);
   });
 
   it('rejects a description on general or fallback, naming it, while a reviewer keeps its description', () => {
@@ -325,7 +302,7 @@ describe('AgentConfig model tiers', () => {
 
   it('reads the routing settings back as given, and on by default', () => {
     expect(getRouting(project(VALID))).toEqual({ hook: true, genericAgents: undefined });
-    const root = makeProject(`skills:\n  alpha: ./skills/alpha\n${TIERS}routing:\n  hook: false\n  generic_agents: [general-purpose, helper]\nagents:\n${VALID}`);
+    const root = makeProject(`skills:\n  alpha: ./skills/alpha\n${TIERS}routing:\n  hook: false\n  generic_agents: [general-purpose, helper]\nagents:\n${VALID}${GENERAL}${FALLBACK}`);
     expect(getRouting(root)).toEqual({ hook: false, genericAgents: ['general-purpose', 'helper'] });
     expect(() => loadAgentFile(makeProject(`skills:\n  alpha: ./skills/alpha\n${TIERS}routing:\n  hook: nope\nagents:\n${VALID}`))).toThrow(/routing/);
   });
@@ -356,10 +333,36 @@ function keepsLines(before: string, after: string): void {
 }
 
 describe('AgentConfig starter entries', () => {
-  it('creates a missing file with the default tier, general and a read-only fallback that load', () => {
+  it('adds starter entries to empty and flow-style maps while retaining existing entries', () => {
+    for (const text of [
+      '# keep\nmodels: { tiers: {} }\nagents: {}\n# end\n',
+      '# keep\nmodels:\n  tiers:\nagents:\n# end\n',
+      '# keep\nmodels: { tiers: { small: { host: pi, model: local/s, thinking: low } } }\nagents: { helper: { description: h, tools: [read], timeout: 5 } }\n# end\n',
+      '# keep\nmodels: { tiers: { small: { host: pi, model: local/s, thinking: low }, } }\nagents: { helper: { description: h, tools: [read], timeout: 5 }, }\n# end\n',
+      '# keep\nmodels:\n  tiers: { small: { host: pi, model: local/s, thinking: low } # existing\n  }\nagents: { helper: { description: h, tools: [read], timeout: 5 } # existing\n}\n# end\n',
+      '# keep\nmodels: { tiers: {\n  small: { host: pi, model: local/s, thinking: low } } }\nagents: {\n  helper: { description: h, tools: [read], timeout: 5 } }\n# end\n',
+    ]) {
+      const root = makeProject(text);
+      expect(addStarterEntries(root, SPEC).added).toEqual(['medium', 'general', 'fallback']);
+      const updated = readFileSync(agentFileOf(root), 'utf8');
+      expect(updated).toContain('# keep\n');
+      expect(updated).toContain('# end\n');
+      expect(getAgent(root, undefined).model).toBe(SPEC.model);
+      expect(getAgent(root, 'fallback').tools).toEqual(SPEC.fallbackTools);
+      if (text.includes('helper')) expect(getAgent(root, 'helper').description).toBe('h');
+    }
+  });
+  it('adds medium without editing an already complete flow-style agents map', () => {
+    const text = 'agents: { general: { tools: [read], timeout: 5 }, fallback: { tools: [read], timeout: 5 } }\n';
+    const root = makeProject(text);
+    expect(addStarterEntries(root, SPEC)).toEqual({ added: ['medium'], present: ['general', 'fallback'] });
+    expect(readFileSync(agentFileOf(root), 'utf8')).toContain(text);
+    expect(getAgent(root, 'general').model).toBe(SPEC.model);
+  });
+  it('creates a missing file with the medium tier, general and a read-only fallback that load', () => {
     const root = tempDir();
     const result = addStarterEntries(root, SPEC);
-    expect(result).toEqual({ added: ['default', 'general', 'fallback'], present: [] });
+    expect(result).toEqual({ added: ['medium', 'general', 'fallback'], present: [] });
     expect(getAgent(root, 'general')).toMatchObject({ host: 'pi', model: 'r9700/Qwen3.8', thinking: 'medium', timeout: 1200, tools: SPEC.generalTools, skills: [] });
     expect(getAgent(root, 'fallback')).toMatchObject({ tools: SPEC.fallbackTools, timeout: 1200, skills: [] });
     expect(getAgent(root, 'general').description).toBeUndefined();
@@ -369,7 +372,7 @@ describe('AgentConfig starter entries', () => {
     const root = tempDir();
     addStarterEntries(root, SPEC);
     const before = readFileSync(agentFileOf(root), 'utf8');
-    expect(addStarterEntries(root, SPEC)).toEqual({ added: [], present: ['default', 'general', 'fallback'] });
+    expect(addStarterEntries(root, SPEC)).toEqual({ added: [], present: ['medium', 'general', 'fallback'] });
     expect(readFileSync(agentFileOf(root), 'utf8')).toBe(before);
   });
 
@@ -380,7 +383,7 @@ skills:
 
 models:
   tiers:
-    default: { host: pi, model: local/m, thinking: low }   # cheap one
+    medium: { host: pi, model: local/m, thinking: low }   # cheap one
 
 agents:
   # the general one
@@ -389,14 +392,14 @@ agents:
     timeout: 5
 `;
     const root = makeProject(text);
-    expect(addStarterEntries(root, { ...SPEC, model: 'other/model' })).toEqual({ added: ['fallback'], present: ['default', 'general'] });
+    expect(addStarterEntries(root, { ...SPEC, model: 'other/model' })).toEqual({ added: ['fallback'], present: ['medium', 'general'] });
     const after = readFileSync(agentFileOf(root), 'utf8');
     keepsLines(text.trimEnd(), after);
     expect(getAgent(root, 'general')).toMatchObject({ model: 'local/m', timeout: 5, tools: ['read'] });
     expect(getAgent(root, 'fallback').tools).toEqual(SPEC.fallbackTools);
   });
 
-  it('adds the default tier alone to a file that holds agents and no default tier', () => {
+  it('adds the medium tier alone to a file that holds agents and no medium tier', () => {
     const text = `skills:
   alpha: ./skills/alpha
 agents:
@@ -409,7 +412,7 @@ agents:
     timeout: 6
 `;
     const root = makeProject(text);
-    expect(addStarterEntries(root, { ...SPEC, thinking: 'low' })).toEqual({ added: ['default', 'fallback'], present: ['general'] });
+    expect(addStarterEntries(root, { ...SPEC, thinking: 'low' })).toEqual({ added: ['medium', 'fallback'], present: ['general'] });
     keepsLines(text.trimEnd(), readFileSync(agentFileOf(root), 'utf8'));
     expect(getAgent(root, 'reviewer')).toMatchObject({ model: 'r9700/Qwen3.8', thinking: 'low' });
   });
@@ -417,7 +420,7 @@ agents:
   it('splices into a file with no trailing newline, a models map without tiers, and no agents map', () => {
     const text = 'skills:\n  alpha: ./skills/alpha\nmodels:\n  other: 1\n# tail comment';
     const root = makeProject(text);
-    expect(addStarterEntries(root, SPEC).added).toEqual(['default', 'general', 'fallback']);
+    expect(addStarterEntries(root, SPEC).added).toEqual(['medium', 'general', 'fallback']);
     const after = readFileSync(agentFileOf(root), 'utf8');
     keepsLines(text, after);
     expect(getAgent(root, 'fallback')).toMatchObject({ model: 'r9700/Qwen3.8', tools: SPEC.fallbackTools });
@@ -428,7 +431,7 @@ agents:
     addStarterEntries(root, SPEC);
     expect(readFileSync(agentFileOf(root), 'utf8')).toBe(`models:
   tiers:
-    default: { host: pi, model: r9700/Qwen3.8, thinking: medium }
+    medium: { host: pi, model: r9700/Qwen3.8, thinking: medium }
 agents:
   general:
     tools: [ read, bash, edit, write, grep, find, ls ]
@@ -439,8 +442,8 @@ agents:
 `);
   });
 
-  it('refuses naming both hosts, and writes nothing, when default is on another host', () => {
-    const text = `models:\n  tiers:\n    default: { host: claude, model: anthropic/x, thinking: low }\nagents:\n${GENERAL}`;
+  it('refuses naming both hosts, and writes nothing, when medium is on another host', () => {
+    const text = `models:\n  tiers:\n    medium: { host: claude, model: anthropic/x, thinking: low }\nagents:\n${GENERAL}`;
     const root = makeProject(text);
     expect(() => addStarterEntries(root, SPEC)).toThrow(StarterHostConflictError);
     expect(() => addStarterEntries(root, SPEC)).toThrow(/claude.*pi|pi.*claude/);

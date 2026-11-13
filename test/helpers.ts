@@ -22,10 +22,16 @@ endpoints:
     parallel: 1
 models:
   tiers:
-    default: { host: pi, model: local/qwen, thinking: high }
+    medium: { host: pi, model: local/qwen, thinking: high }
     small: { host: pi, model: local/qwen-small, thinking: low }
     cloud: { host: pi, model: cloud/model, thinking: low }
 agents:
+  general:
+    tools: [read, bash, write, edit]
+    timeout: 9
+  fallback:
+    tools: [read, grep]
+    timeout: 8
   helper:
     description: A test helper
     skills: [alpha, beta]
@@ -52,19 +58,16 @@ agents:
  */
 export const TIERED_YAML =
   DEFAULT_YAML.replace(
+    '    medium: { host: pi, model: local/qwen, thinking: high }\n',
+    '    default: { host: pi, model: local/qwen, thinking: high }\n' +
+      '    medium: { host: pi, model: r9700/Qwen3.8, thinking: medium }\n',
+  ).replace(
     '    cloud: { host: pi, model: cloud/model, thinking: low }\n',
     '    cloud: { host: pi, model: cloud/model, thinking: low }\n' +
-      '    medium: { host: pi, model: r9700/Qwen3.8, thinking: medium }\n' +
       '    large: { host: pi, model: cloud/large, thinking: high }\n' +
       '    far: { host: claude, model: anthropic/opus, thinking: max }\n',
   ) +
-  `  general:
-    tools: [read, bash, write, edit]
-    timeout: 9
-  fallback:
-    tools: [read, grep]
-    timeout: 8
-  reviewer:
+  `  reviewer:
     description: A reviewer with its own model for large
     tiers:
       large: { model: cloud/reviewer-large }
